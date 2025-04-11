@@ -1,22 +1,27 @@
-# hi 
-import networkx as nx
+import networkx as nx #I want to use the networkx library, and I'll call it nx fro now on to keep things short
 import matplotlib.pyplot as plt
 
-# Create an undirected graph (like Facebook friendship)
-G = nx.Graph()
+#create an empty undirected graph 
+G = nx.Graph() #make me one actual graph called 'G' using Graph blueprint. 
 
-# Add nodes (people)
-G.add_nodes_from(["Alice", "Bob", "Charlie", "Diana"])
+# add nodes
+G.add_nodes_from(["Doc1", "Doc2", "Doc3", "Doc4", "Doc5"])
 
-# Add edges (friendships)
+# add edges
 G.add_edges_from([
-    ("Alice", "Bob"),
-    ("Alice", "Charlie"),
-    ("Bob", "Diana")
+    ("Doc1", "Doc2"),
+    ("Doc2", "Doc3"),
+    ("Doc3", "Doc4"),
+    ("Doc4", "Doc5"),
+    ("Doc5", "Doc1")
 ])
 
-# Draw the graph
-plt.figure(figsize=(6,4))
-nx.draw(G, with_labels=True, node_color="lightblue", node_size=1000, font_weight="bold")
-plt.title("Undirected Friendship Graph")
+#draw the graph
+nx.draw(G, with_labels=True) #hey, I want to draw the graph with labels shown
 plt.show()
+
+# library: networkx -> collection of tools for grpah theory
+# class: graph (from networkx) -> a blueprint for undirected graphs
+# object: G = nx.Graph () -> personal graph created using blueprint
+
+# library > class > object
