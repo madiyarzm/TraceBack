@@ -15,7 +15,7 @@ else:
 nltk.download('stopwords')
 
 import pandas as pd
-df = pd.read_csv('fake-news/train.csv')
+df = pd.read_csv('classification/dataset/train.csv')
 
 #print(df.head())
 
