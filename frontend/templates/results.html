@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>EchoRoot – Results</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f8f9fa;
+      padding: 2rem;
+      color: #333;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+    .article {
+      background: white;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .article a {
+      font-weight: bold;
+      color: #0066cc;
+      text-decoration: none;
+    }
+    .article a:hover {
+      text-decoration: underline;
+    }
+    .date {
+      font-size: 0.85rem;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <h1>Results for: "{{ query }}"</h1>
+
+  {% for article in articles %}
+    <div class="article">
+      <a href="{{ article.url }}" target="_blank">{{ article.title }}</a>
+      <p>{{ article.snippet }}</p>
+      <p class="date">Date: {{ article.date }}</p>
+    </div>
+  {% endfor %}
+</body>
+</html>
