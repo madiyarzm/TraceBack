@@ -1,0 +1,51 @@
+import networkx as nx
+import matplotlib.pyplot as plt
+
+G = nx.Graph()
+G.add_edge("Source", "Media", weight=3)
+G.add_edge("Media", "User", weight=2)
+G.add_edge("Bot", "User", weight=1)
+
+#1. NODE COLORS
+node_colors = ['green', 'blue', 'gray', 'red']
+
+#2. NODE SIZES
+node_sizes = [1200, 800, 600, 400]
+
+#3. EDGE STYLING - COLOR and Thickness
+edge_colors = ['black', 'gray', 'red']
+edge_widths = [3, 2, 1] #based on edge weights
+
+#4. LAYOUT CONTROL - where nodes appear
+pos = nx.spring_layout(G, seed=42) #fixed positions
+
+#5. Advanced NODE STYLING - transparency, borders, shapes
+alpha = 0.7 #transparency
+edgecolors = 'black' #node borders
+linewidths = 2  #border thickness
+
+#6. FONT STYLING - How labels look
+font_size = 14
+font_weight = 'bold'
+font_color = 'white'
+
+nx.draw(G, pos=pos,
+        # Node styling
+        node_color=node_colors,
+        node_size=node_sizes,
+        alpha=alpha,
+        edgecolors=edgecolors,
+        linewidths=linewidths,
+        
+        # Edge styling  
+        edge_color=edge_colors,
+        width=edge_widths,
+        
+        # Font styling
+        with_labels=True,
+        font_size=font_size,
+        font_weight=font_weight,
+        font_color=font_color)
+
+plt.title("All Styling Applied at Once", fontsize=16, fontweight='bold')
+plt.show()
