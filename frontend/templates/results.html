@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>EchoRoot – Results</title>
+  <title>TraceBack – Results</title>
   <style>
     body {
       font-family: 'Segoe UI', sans-serif;
@@ -33,9 +33,21 @@
       font-size: 0.85rem;
       color: #666;
     }
+    .verdict-fake {
+      color: red;
+    }
+    .verdict-real {
+      color: green;
+    }
   </style>
 </head>
 <body>
+  <h2>Model Verdict:
+    <span class="{{ 'red' if verdict == 'FAKE' else 'green' }}">
+        {{ verdict }}
+    </span>
+  </h2>
+
   <h1>Results for: "{{ query }}"</h1>
 
   {% for article in articles %}
