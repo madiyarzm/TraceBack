@@ -1,0 +1,193 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Design Tokens ─────────────────────────────────────────── */
+:root {
+  --tb-bg:          #07090d;
+  --tb-surface:     #0d1117;
+  --tb-surface-2:   #161b22;
+  --tb-border:      #21262d;
+  --tb-border-2:    #30363d;
+
+  --tb-text:        #e6edf3;
+  --tb-text-muted:  #7d8590;
+  --tb-text-dim:    #3d444d;
+
+  --tb-blue:        #58a6ff;
+  --tb-blue-dim:    rgba(88, 166, 255, 0.1);
+  --tb-green:       #3fb950;
+  --tb-green-dim:   rgba(63, 185, 80, 0.1);
+  --tb-amber:       #d29922;
+  --tb-amber-dim:   rgba(210, 153, 34, 0.1);
+  --tb-red:         #f85149;
+  --tb-red-dim:     rgba(248, 81, 73, 0.1);
+
+  /* UI font: matches VS Code's own interface — much more readable than monospace for labels */
+  --tb-ui-font: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif);
+  /* Code font: used only for raw output, file contents, commands */
+  --tb-font: var(--vscode-editor-font-family, 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, monospace);
+  --tb-font-size: 12px;
+}
+
+/* ─── Base Reset ────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--tb-bg);
+  color: var(--tb-text);
+  font-family: var(--tb-ui-font);
+  font-size: var(--tb-font-size);
+  overflow: hidden;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--tb-bg);
+}
+
+/* ─── React Flow overrides ──────────────────────────────────── */
+.react-flow {
+  background: var(--tb-bg) !important;
+}
+
+.react-flow__background {
+  background: var(--tb-bg) !important;
+}
+
+.react-flow__background pattern circle {
+  fill: var(--tb-border) !important;
+}
+
+.react-flow__edge-path {
+  stroke: var(--tb-border-2) !important;
+}
+
+.react-flow__edge.animated .react-flow__edge-path {
+  stroke: var(--tb-blue) !important;
+  opacity: 0.5;
+}
+
+/* Controls */
+.react-flow__controls {
+  background: var(--tb-surface) !important;
+  border: 1px solid var(--tb-border) !important;
+  border-radius: 6px !important;
+  box-shadow: none !important;
+}
+
+.react-flow__controls-button {
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid var(--tb-border) !important;
+  color: var(--tb-text-muted) !important;
+  fill: var(--tb-text-muted) !important;
+  transition: color 0.1s, fill 0.1s;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--tb-surface-2) !important;
+  color: var(--tb-blue) !important;
+  fill: var(--tb-blue) !important;
+}
+
+/* MiniMap */
+.react-flow__minimap {
+  background: var(--tb-surface) !important;
+  border: 1px solid var(--tb-border) !important;
+  border-radius: 6px !important;
+}
+
+/* ─── Node entry animation ──────────────────────────────────── */
+.react-flow__node {
+  animation: nodeIn 0.18s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes nodeIn {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ─── Pending node left-border pulse ─────────────────────────── */
+@keyframes pendingPulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.35; }
+}
+
+/* ─── Stumble halo on looping node ──────────────────────────── */
+@keyframes stumbleHalo {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(248, 81, 73, 0.5); }
+  50%       { box-shadow: 0 0 0 6px rgba(248, 81, 73, 0); }
+}
+
+/* ─── Thinking dots animation ───────────────────────────────── */
+@keyframes thinkCycle {
+  0%, 100% { opacity: 0.2; }
+  50%       { opacity: 1; }
+}
+
+.think-dot-1 { animation: thinkCycle 1.4s ease-in-out 0s    infinite; }
+.think-dot-2 { animation: thinkCycle 1.4s ease-in-out 0.23s infinite; }
+.think-dot-3 { animation: thinkCycle 1.4s ease-in-out 0.46s infinite; }
+
+/* ─── Radar pulse (empty state) ─────────────────────────────── */
+@keyframes radarRing {
+  0%   { transform: scale(0.4); opacity: 0.5; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+.radar-ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid var(--tb-blue);
+  animation: radarRing 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+}
+
+.radar-ring-2 { animation-delay: 0.8s; }
+.radar-ring-3 { animation-delay: 1.6s; }
+
+/* ─── Drawer slide up ───────────────────────────────────────── */
+@keyframes drawerSlideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to   { transform: translateY(0);    opacity: 1; }
+}
+
+/* ─── Blink cursor ──────────────────────────────────────────── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+.cursor-blink { animation: blink 1s step-end infinite; }
+
+/* ─── Live pulse dot ─────────────────────────────────────────── */
+@keyframes livePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.5); }
+  50%       { box-shadow: 0 0 0 4px rgba(63, 185, 80, 0); }
+}
+
+.live-dot { animation: livePulse 1.5s ease-in-out infinite; }
+
+/* ─── Scrollbar ──────────────────────────────────────────────── */
+::-webkit-scrollbar        { width: 4px; height: 4px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: var(--tb-border-2); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--tb-text-muted); }
+
+/* ─── Select ─────────────────────────────────────────────────── */
+select option {
+  background: var(--tb-surface);
+  color: var(--tb-text);
+}

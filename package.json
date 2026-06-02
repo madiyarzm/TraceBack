@@ -1,0 +1,133 @@
+{
+  "name": "traceback",
+  "displayName": "TraceBack",
+  "description": "Live action map for AI agent sessions. See exactly what your agent read, edited, and ran.",
+  "version": "0.1.0",
+  "publisher": "traceback",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/madiyarzhunussov/TraceBack"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "keywords": ["ai", "agents", "observability", "claude", "opentelemetry"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "traceback.openMap",
+        "title": "TraceBack: Open Action Map"
+      },
+      {
+        "command": "traceback.clearSession",
+        "title": "TraceBack: Clear Current Session"
+      },
+      {
+        "command": "traceback.startListening",
+        "title": "TraceBack: Start Listening"
+      },
+      {
+        "command": "traceback.stopListening",
+        "title": "TraceBack: Stop Listening"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "traceback-sidebar",
+          "title": "TraceBack",
+          "icon": "$(pulse)"
+        }
+      ]
+    },
+    "views": {
+      "traceback-sidebar": [
+        {
+          "type": "webview",
+          "id": "traceback.mapView",
+          "name": "Action Map"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "traceback.openMap",
+          "when": "view == traceback.mapView",
+          "group": "navigation"
+        },
+        {
+          "command": "traceback.clearSession",
+          "when": "view == traceback.mapView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "TraceBack",
+      "properties": {
+        "traceback.port": {
+          "type": "number",
+          "default": 7777,
+          "description": "Local port TraceBack listens on for Claude Code hook events."
+        },
+        "traceback.autoInstallHooks": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically install Claude Code hooks into ~/.claude/settings.json on activation."
+        },
+        "traceback.llmProvider": {
+          "type": "string",
+          "enum": ["disabled", "groq", "ollama"],
+          "default": "disabled",
+          "description": "LLM backend for the Narrative Engine. Set to 'groq' or 'ollama' to enable live summaries and the chat helper."
+        },
+        "traceback.groqApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Groq API key. Get one free at console.groq.com."
+        },
+        "traceback.groqModel": {
+          "type": "string",
+          "default": "llama-3.1-8b-instant",
+          "description": "Groq model to use for summaries and chat. 'llama-3.1-8b-instant' is fast and free."
+        },
+        "traceback.ollamaModel": {
+          "type": "string",
+          "default": "llama3.2",
+          "description": "Ollama model to use (must be pulled locally). e.g. 'llama3.2' or 'mistral'."
+        },
+        "traceback.ollamaPort": {
+          "type": "number",
+          "default": 11434,
+          "description": "Port Ollama is listening on (default 11434)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile && npm run build:webview",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "build:webview": "cd webview && npm run build",
+    "dev:webview": "cd webview && npm run dev",
+    "package": "vsce package",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  },
+  "dependencies": {}
+}
