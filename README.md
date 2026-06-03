@@ -25,7 +25,9 @@ TraceBack fixes that. It hooks directly into Claude Code's hook system and strea
 
 ## Demo
 
-> ⚡ Add a GIF here showing the live action map in the sidebar while a Claude Code session runs.
+<div align="center">
+  <img src="assets/demo.gif" alt="TraceBack live action map — nodes appear in real time as Claude Code runs" width="400" />
+</div>
 
 ---
 
