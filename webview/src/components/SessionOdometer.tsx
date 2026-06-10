@@ -13,6 +13,8 @@ interface Props {
   nodes:       TimelineNode[];
   isLive:      boolean;
   anomaly?:    AnomalyStateUI;
+  /** Cumulative detections this session (anomalyHistory.length) — never resets. */
+  anomalyCount?: number;
   /** Real token usage from the transcript; falls back to the estimate. */
   realTokens?: number;
   aiSummary?:  string;
@@ -22,7 +24,7 @@ interface Props {
 }
 
 export default function SessionOdometer({
-  nodes, isLive, anomaly, realTokens, aiSummary, chatAnswer, chatLoading, onChat,
+  nodes, isLive, anomaly, anomalyCount = 0, realTokens, aiSummary, chatAnswer, chatLoading, onChat,
 }: Props) {
   const [question, setQuestion] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
@@ -70,9 +72,9 @@ export default function SessionOdometer({
           color={m.errorCount > 0 ? '#f85149' : undefined}
         />
         <Stat
-          label="loops"
-          value={anomaly?.type === 'repeater' ? '1' : '0'}
-          color={anomaly?.type === 'repeater' ? '#f85149' : undefined}
+          label="anomalies"
+          value={String(anomalyCount)}
+          color={anomalyCount > 0 ? '#f85149' : undefined}
         />
         {/* Real tokens come from the transcript; ≈ marks heuristic fallbacks */}
         <Stat

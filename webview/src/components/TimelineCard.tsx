@@ -74,10 +74,12 @@ interface Props {
   expanded: boolean;
   /** True when this card's events are implicated in the current anomaly. */
   flagged?: boolean;
+  /** Set when this card was part of a PAST anomaly — permanent evidence tag. */
+  historyReason?: string;
   onToggle: (id: string) => void;
 }
 
-function TimelineCard({ node, expanded, flagged, onToggle }: Props) {
+function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Props) {
   // "Thinking" rows render as a quiet divider, not a card
   if (node.toolName === '__thinking__') {
     return (
@@ -135,6 +137,25 @@ function TimelineCard({ node, expanded, flagged, onToggle }: Props) {
           } : {}),
         }}
       >
+        {/* ── Permanent anomaly evidence strip (survives recovery) ── */}
+        {historyReason && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '3px 10px',
+            borderBottom: '1px solid rgba(210,153,34,0.3)',
+            background: flagged ? 'rgba(248,81,73,0.12)' : 'rgba(210,153,34,0.08)',
+            color: flagged ? '#ffa198' : '#d29922',
+            fontSize: 9.5, fontWeight: 600,
+          }}>
+            <span>⚠</span>
+            <span style={{
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {historyReason}
+            </span>
+          </div>
+        )}
+
         {/* ── Compact header row ── */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 7,

@@ -8,12 +8,20 @@ import SessionPicker, { SessionSummary } from './components/SessionPicker';
 import Toolbar from './components/Toolbar';
 import vscode from './vscodeApi';
 
+interface AnomalyRecordUI {
+  type:            'repeater' | 'error_thrash' | 'stall';
+  reason:          string;
+  flaggedEventIds: string[];
+  detectedAt:      number;
+}
+
 interface FullSessionData extends SessionSummary {
-  nodes:          TimelineNode[];
-  anomaly?:       AnomalyStateUI;
-  aiSummary?:     string;
-  contextTokens?: number;
-  cwd?:           string;
+  nodes:           TimelineNode[];
+  anomaly?:        AnomalyStateUI;
+  anomalyHistory?: AnomalyRecordUI[];
+  aiSummary?:      string;
+  contextTokens?:  number;
+  cwd?:            string;
 }
 
 interface SessionUpdateMessage {
@@ -87,6 +95,23 @@ export default function App() {
   const anomaly    = display?.anomaly;
   const realCount  = traceNodes.filter((n) => n.toolName !== '__thinking__').length;
   const flaggedIds = new Set(anomaly?.flaggedEventIds ?? []);
+
+  // Permanent evidence trail: eventId → reason of the anomaly it was part of.
+  // Cards keep their ⚠ tag even after the live anomaly self-clears.
+  const history = display?.anomalyHistory ?? [];
+  const historyByEvent = new Map<string, string>();
+  for (const rec of history) {
+    for (const id of rec.flaggedEventIds) {
+      if (!historyByEvent.has(id)) historyByEvent.set(id, rec.reason);
+    }
+  }
+  function historyReasonFor(node: TimelineNode): string | undefined {
+    for (const id of node.eventIds ?? []) {
+      const reason = historyByEvent.get(id);
+      if (reason) return reason;
+    }
+    return undefined;
+  }
 
   const pickerSessions: SessionSummary[] = sessions.map((s) => ({
     id:        s.id,
@@ -188,6 +213,7 @@ export default function App() {
               nodes={traceNodes}
               isLive={isLive}
               anomaly={anomaly}
+              anomalyCount={history.length}
               realTokens={display?.contextTokens}
               aiSummary={display?.aiSummary}
               chatAnswer={chatAnswer}
@@ -214,6 +240,7 @@ export default function App() {
                       !!anomaly?.isAnomalous &&
                       (node.eventIds?.some((id) => flaggedIds.has(id)) ?? false)
                     }
+                    historyReason={historyReasonFor(node)}
                     onToggle={(id) => setExpandedId((cur) => (cur === id ? null : id))}
                   />
                 ))}
