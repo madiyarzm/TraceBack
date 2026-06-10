@@ -4,20 +4,47 @@ import { installHooks, removeHooks } from './hookManager';
 import { traceStore } from './traceStore';
 import { TracebackWebviewProvider } from './webviewProvider';
 import { callLLM, LLMConfig } from './llmClient';
+import { loadEnvFromAllKnownLocations } from './envLoader';
 
 let outputChannel: vscode.OutputChannel;
 
+/**
+ * Resolves the LLM backend in this priority order, per knob:
+ *   1. VS Code setting (explicit, per-machine override)
+ *   2. process.env (.env file or shell env)
+ *   3. hard-coded default
+ *
+ * Provider auto-detects from the env: if the user only set GROQ_API_KEY (or
+ * OLLAMA_MODEL) without flipping traceback.llmProvider, we still light up
+ * the Narrative Engine instead of silently doing nothing.
+ */
 function getLLMConfig(): LLMConfig | null {
-  const cfg      = vscode.workspace.getConfiguration('traceback');
-  const provider = cfg.get<string>('llmProvider') ?? 'disabled';
-  if (provider === 'disabled') return null;
+  const cfg = vscode.workspace.getConfiguration('traceback');
+
+  let provider = cfg.get<string>('llmProvider') ?? 'disabled';
+  if (provider === 'disabled') {
+    if (process.env.GROQ_API_KEY)  provider = 'groq';
+    else if (process.env.OLLAMA_MODEL) provider = 'ollama';
+    else return null;
+  }
+
   return {
-    provider:   provider as 'groq' | 'ollama',
-    apiKey:     cfg.get<string>('groqApiKey') ?? '',
-    model:      provider === 'groq'
-      ? (cfg.get<string>('groqModel')   ?? 'llama-3.1-8b-instant')
-      : (cfg.get<string>('ollamaModel') ?? 'llama3.2'),
-    ollamaPort: cfg.get<number>('ollamaPort') ?? 11434,
+    provider: provider as 'groq' | 'ollama',
+    apiKey:
+      cfg.get<string>('groqApiKey') ||
+      process.env.GROQ_API_KEY ||
+      '',
+    model: provider === 'groq'
+      ? (cfg.get<string>('groqModel') ||
+         process.env.GROQ_MODEL ||
+         'llama-3.1-8b-instant')
+      : (cfg.get<string>('ollamaModel') ||
+         process.env.OLLAMA_MODEL ||
+         'llama3.2'),
+    ollamaPort:
+      cfg.get<number>('ollamaPort') ||
+      Number(process.env.OLLAMA_PORT) ||
+      11434,
   };
 }
 
@@ -32,6 +59,18 @@ const CHAT_SYSTEM =
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   outputChannel = vscode.window.createOutputChannel('TraceBack');
   outputChannel.appendLine('[TraceBack] Extension activating...');
+
+  const workspaceFolders =
+    vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath) ?? [];
+  const loadedKeys = loadEnvFromAllKnownLocations(
+    context.extensionUri.fsPath,
+    workspaceFolders,
+  );
+  if (loadedKeys.length) {
+    outputChannel.appendLine(
+      `[TraceBack] Loaded .env keys: ${loadedKeys.join(', ')}`,
+    );
+  }
 
   const config      = vscode.workspace.getConfiguration('traceback');
   const port: number       = config.get('port') ?? 7777;

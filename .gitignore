@@ -6,3 +6,8 @@ webview/node_modules/
 .DS_Store
 coverage/
 .vitest-cache/
+
+# Local secrets — never commit. Only .env.example is tracked.
+.env
+.env.local
+.env.*.local
