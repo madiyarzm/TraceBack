@@ -13,17 +13,19 @@ export interface LLMConfig {
 export async function callLLM(
   config: LLMConfig,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  maxTokens = 220
 ): Promise<string> {
   return config.provider === 'groq'
-    ? callGroq(config, systemPrompt, userPrompt)
-    : callOllama(config, systemPrompt, userPrompt);
+    ? callGroq(config, systemPrompt, userPrompt, maxTokens)
+    : callOllama(config, systemPrompt, userPrompt, maxTokens);
 }
 
 function callGroq(
   config: LLMConfig,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  maxTokens: number
 ): Promise<string> {
   const body = JSON.stringify({
     model: config.model,
@@ -31,7 +33,8 @@ function callGroq(
       { role: 'system', content: systemPrompt },
       { role: 'user',   content: userPrompt },
     ],
-    max_tokens: 200,
+    // Hard output cap — the UI lives in a narrow sidebar; verbosity is a bug.
+    max_tokens: maxTokens,
     temperature: 0.35,
   });
 
@@ -70,7 +73,8 @@ function callGroq(
 function callOllama(
   config: LLMConfig,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  maxTokens: number
 ): Promise<string> {
   const body = JSON.stringify({
     model:    config.model,
@@ -78,6 +82,7 @@ function callOllama(
       { role: 'system', content: systemPrompt },
       { role: 'user',   content: userPrompt },
     ],
+    options: { num_predict: maxTokens },
     stream: false,
   });
 
