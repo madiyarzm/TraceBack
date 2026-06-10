@@ -110,8 +110,10 @@ export default function SessionOdometer({
           fontSize: 10.5, lineHeight: 1.45,
           color: 'var(--tb-text-muted)',
           fontStyle: 'italic',
+          wordBreak: 'break-word',
+          overflowWrap: 'anywhere',
         }}>
-          {isLive ? '◉ ' : ''}{aiSummary}
+          {isLive ? '◉ ' : ''}{stripMd(aiSummary)}
         </div>
       )}
 
@@ -151,20 +153,85 @@ export default function SessionOdometer({
           </div>
           {chatAnswer && (
             <div style={{
-              fontSize: 11, lineHeight: 1.5,
+              fontSize: 11, lineHeight: 1.55,
               color: 'var(--tb-text)',
               background: 'var(--tb-surface)',
               border: '1px solid var(--tb-border)',
               borderRadius: 4, padding: '6px 9px',
-              maxHeight: 140, overflowY: 'auto',
+              maxHeight: 180, overflowY: 'auto',
+              overflowX: 'hidden',
+              wordBreak: 'break-word',
+              overflowWrap: 'anywhere',
             }}>
-              {chatAnswer}
+              <MarkdownLite text={chatAnswer} />
             </div>
           )}
         </div>
       )}
     </div>
   );
+}
+
+/** Belt-and-suspenders: the summary prompt forbids markdown, but strip any
+ *  markers that slip through rather than rendering them as literal asterisks. */
+function stripMd(text: string): string {
+  return text
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1');
+}
+
+/**
+ * Minimal markdown renderer for chat answers: **bold**, `code`, and "- "
+ * bullets only — exactly what the system prompt permits. No library: a full
+ * md renderer invites the layout blowouts this exists to prevent.
+ */
+function MarkdownLite({ text }: { text: string }) {
+  const lines = text.split('\n').filter((l) => l.trim().length > 0);
+  return (
+    <>
+      {lines.map((raw, i) => {
+        const line     = raw.replace(/^#{1,6}\s*/, ''); // demote stray headings
+        const isBullet = /^\s*[-•]\s+/.test(line);
+        const content  = isBullet ? line.replace(/^\s*[-•]\s+/, '') : line;
+        return (
+          <div key={i} style={{
+            display: 'flex', gap: 5,
+            padding: '1px 0',
+            paddingLeft: isBullet ? 4 : 0,
+          }}>
+            {isBullet && <span style={{ color: 'var(--tb-text-muted)', flexShrink: 0 }}>•</span>}
+            <span style={{ minWidth: 0 }}>{renderInline(content)}</span>
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
+function renderInline(line: string): React.ReactNode[] {
+  return line
+    .split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+    .filter(Boolean)
+    .map((part, i) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={i} style={{ fontWeight: 600 }}>{part.slice(2, -2)}</strong>;
+      }
+      if (part.startsWith('`') && part.endsWith('`')) {
+        return (
+          <code key={i} style={{
+            fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+            fontSize: 10,
+            background: 'var(--tb-surface-2)',
+            border: '1px solid var(--tb-border)',
+            borderRadius: 3,
+            padding: '0 3px',
+            wordBreak: 'break-all',
+          }}>{part.slice(1, -1)}</code>
+        );
+      }
+      return part;
+    });
 }
 
 function Stat({ label, value, color, dim }: {
