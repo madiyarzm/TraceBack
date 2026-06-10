@@ -31,9 +31,9 @@ function badge(s: SessionSummary): string {
 export default function SessionPicker({ sessions, displayId, pinnedId, onSelect }: Props) {
   if (sessions.length === 0) return null;
 
-  const backgroundAnomalies = sessions.filter(
+  const backgroundAnomalous = sessions.filter(
     (s) => s.anomalous && s.id !== displayId
-  ).length;
+  );
 
   return (
     <div style={{
@@ -91,19 +91,23 @@ export default function SessionPicker({ sessions, displayId, pinnedId, onSelect 
         ))}
       </select>
 
-      {backgroundAnomalies > 0 && (
-        <span style={{
-          flexShrink: 0,
-          fontSize: 9,
-          fontWeight: 700,
-          color: '#ffa198',
-          background: 'rgba(248,81,73,0.18)',
-          border: '1px solid rgba(248,81,73,0.5)',
-          borderRadius: 3,
-          padding: '1px 6px',
-          animation: 'pendingPulse 1.2s ease-in-out infinite',
-        }}>
-          ⚠ {backgroundAnomalies}
+      {backgroundAnomalous.length > 0 && (
+        <span
+          onClick={() => onSelect(backgroundAnomalous[0].id)}
+          title={`Jump to ${backgroundAnomalous[0].label}`}
+          style={{
+            flexShrink: 0,
+            fontSize: 9,
+            fontWeight: 700,
+            color: '#ffa198',
+            background: 'rgba(248,81,73,0.18)',
+            border: '1px solid rgba(248,81,73,0.5)',
+            borderRadius: 3,
+            padding: '1px 6px',
+            cursor: 'pointer',
+            animation: 'pendingPulse 1.2s ease-in-out infinite',
+          }}>
+          ⚠ {backgroundAnomalous.length}
         </span>
       )}
     </div>
