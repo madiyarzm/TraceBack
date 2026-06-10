@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { AnomalyState, detectAnomaly } from './anomalyDetector';
+import { AnomalyRecord, AnomalyState, detectAnomaly } from './anomalyDetector';
 import { readContextTokens } from './tokenReader';
 
 export type EventKind =
@@ -68,6 +68,8 @@ export interface TraceSession {
   events: TraceEvent[];
   nodes: TraceNode[];
   anomaly?: AnomalyState;
+  /** Every detection ever made in this session — never cleared on recovery. */
+  anomalyHistory: AnomalyRecord[];
   aiSummary?: string;
   transcriptPath?: string;
   /** Real token usage read from the Claude Code transcript (not estimated). */
@@ -80,8 +82,11 @@ class TraceStore {
   private _sessions: Map<string, TraceSession> = new Map();
   private _activeSessionId: string | null = null;
   private _onDidUpdate = new vscode.EventEmitter<TraceSession>();
+  private _onAnomaly = new vscode.EventEmitter<{ session: TraceSession; record: AnomalyRecord }>();
 
   readonly onDidUpdate = this._onDidUpdate.event;
+  /** Fires once per anomaly ONSET (not per re-evaluation of an ongoing one). */
+  readonly onAnomaly = this._onAnomaly.event;
 
   startSession(sessionId: string): TraceSession {
     const count = this._sessions.size + 1;
@@ -92,6 +97,7 @@ class TraceStore {
       stopped: false,
       events: [],
       nodes: [],
+      anomalyHistory: [],
     };
     this._sessions.set(sessionId, session);
     this._activeSessionId = sessionId;
@@ -146,9 +152,10 @@ class TraceStore {
     // Recompute anomaly state on every event (O(1), tail-only). A finished
     // session can't be anomalous; otherwise the state self-clears as soon as
     // the triggering condition stops holding.
-    session.anomaly = session.stopped
-      ? undefined
-      : detectAnomaly(session.events, Date.now());
+    this._setAnomaly(
+      session,
+      session.stopped ? undefined : detectAnomaly(session.events, Date.now())
+    );
 
     if (event.transcriptPath) session.transcriptPath = event.transcriptPath;
     if (event.cwd && session.cwd !== event.cwd) {
@@ -196,9 +203,33 @@ class TraceStore {
         next.isAnomalous !== (prev?.isAnomalous ?? false) ||
         next.reason !== prev?.reason;
       if (changed) {
-        session.anomaly = next;
+        this._setAnomaly(session, next);
         this._onDidUpdate.fire(session);
       }
+    }
+  }
+
+  /**
+   * Single write-path for anomaly state. The live state self-clears on
+   * recovery, but each ONSET (none→anomalous, or the type changing) appends a
+   * permanent AnomalyRecord and fires onAnomaly exactly once — re-evaluations
+   * of an ongoing anomaly (e.g. a stall's seconds counter) do not re-fire.
+   */
+  private _setAnomaly(session: TraceSession, next: AnomalyState | undefined): void {
+    const prev = session.anomaly;
+    session.anomaly = next;
+    const isOnset =
+      next?.isAnomalous && next.type &&
+      (!prev?.isAnomalous || prev.type !== next.type);
+    if (isOnset) {
+      const record: AnomalyRecord = {
+        type:            next.type!,
+        reason:          next.reason ?? 'Anomaly detected',
+        flaggedEventIds: next.flaggedEventIds,
+        detectedAt:      Date.now(),
+      };
+      session.anomalyHistory.push(record);
+      this._onAnomaly.fire({ session, record });
     }
   }
 
@@ -221,6 +252,7 @@ class TraceStore {
 
   dispose(): void {
     this._onDidUpdate.dispose();
+    this._onAnomaly.dispose();
   }
 }
 

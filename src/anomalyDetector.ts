@@ -19,6 +19,17 @@ export interface AnomalyState {
   flaggedEventIds: string[];
 }
 
+/**
+ * Permanent record of a detection. The live AnomalyState self-clears when the
+ * agent recovers; records never do — they are the session's evidence trail.
+ */
+export interface AnomalyRecord {
+  type:            AnomalyType;
+  reason:          string;
+  flaggedEventIds: string[];
+  detectedAt:      number;
+}
+
 const REPEAT_N = 4;       // identical PreToolUse calls in a row
 const THRASH_N = 3;       // consecutive failed PostToolUse results
 const STALL_MS = 60_000;  // PreToolUse with no Post for this long
