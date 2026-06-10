@@ -33,6 +33,16 @@ export function startServer(outputChannel: vscode.OutputChannel, port: number): 
           const payload = JSON.parse(body);
           const event = handleHookPayload(payload);
 
+          // Tripwires: static policy rules checked BEFORE execution. A match
+          // denies the call immediately, fleet-wide, no human in the loop.
+          if (event && event.kind === 'pre_tool_use') {
+            const tripped = checkTripwires(event);
+            if (tripped) {
+              denyCall(event, res, tripped);
+              return;
+            }
+          }
+
           // Breakpoint gate: while a session is paused, PreToolUse responses
           // are held open — Claude Code waits on the curl, freezing the agent
           // at the boundary of its next tool call. resume/redirect resolves it.
@@ -131,30 +141,7 @@ export function flushSession(sessionId: string, decision: 'allow' | 'deny', reas
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
       } else {
-        const why = reason ?? 'Intercepted by user via TraceBack.';
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        // Both schemas for compatibility: legacy top-level decision and the
-        // current hookSpecificOutput.permissionDecision form.
-        res.end(JSON.stringify({
-          decision: 'block',
-          reason: why,
-          hookSpecificOutput: {
-            hookEventName:            'PreToolUse',
-            permissionDecision:       'deny',
-            permissionDecisionReason: why,
-          },
-        }));
-        // Synthetic completion so the timeline shows the interception instead
-        // of an eternally-pending node (a denied call emits no PostToolUse).
-        traceStore.addEvent({
-          id:           `evt-intercept-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          sessionId:    event.sessionId,
-          kind:         'post_tool_use',
-          toolName:     event.toolName,
-          toolResponse: `⛔ Intercepted by user: ${why}`,
-          isError:      true,
-          timestamp:    Date.now(),
-        });
+        sendDeny(event, res, reason ?? 'Intercepted by user via TraceBack.', 'Intercepted by user');
       }
     } catch (err) {
       _outputChannel.appendLine(`[TraceBack] Failed to flush parked call: ${err}`);
@@ -220,6 +207,72 @@ function isErrorResponse(resp: unknown): boolean {
     if (r.interrupted === true) return true;
   }
   return false;
+}
+
+// ─── Tripwires ────────────────────────────────────────────────────────────────
+
+interface TripwireRule {
+  /** Regex matched against the tool name (e.g. "Bash", "Edit|Write"). Empty = any tool. */
+  tool?: string;
+  /** Regex matched against toolName + serialized tool input. Required. */
+  pattern: string;
+  /** Custom message fed back to the agent. */
+  reason?: string;
+}
+
+/** Returns the deny reason if any configured tripwire matches this call. */
+function checkTripwires(event: TraceEvent): string | null {
+  const rules = vscode.workspace
+    .getConfiguration('traceback')
+    .get<TripwireRule[]>('tripwires') ?? [];
+
+  for (const rule of rules) {
+    if (!rule?.pattern) continue;
+    try {
+      if (rule.tool && !new RegExp(rule.tool).test(event.toolName ?? '')) continue;
+      const haystack = `${event.toolName ?? ''} ${JSON.stringify(event.toolInput ?? {})}`;
+      if (new RegExp(rule.pattern, 'i').test(haystack)) {
+        return rule.reason ??
+          `Blocked by TraceBack tripwire (pattern: ${rule.pattern}). Do not retry this exact call.`;
+      }
+    } catch (err) {
+      _outputChannel.appendLine(`[TraceBack] Invalid tripwire regex "${rule.pattern}": ${err}`);
+    }
+  }
+  return null;
+}
+
+function denyCall(event: TraceEvent, res: http.ServerResponse, reason: string): void {
+  sendDeny(event, res, reason, 'Tripwire blocked');
+  _outputChannel.appendLine(`[TraceBack] ⛔ tripwire blocked ${event.toolName ?? 'tool'}: ${reason}`);
+  vscode.window.showWarningMessage(`TraceBack tripwire blocked ${event.toolName ?? 'a tool call'}: ${reason}`);
+}
+
+/** Shared deny response (used by tripwires and breakpoint redirects). */
+function sendDeny(event: TraceEvent, res: http.ServerResponse, reason: string, label: string): void {
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  // Both schemas for compatibility: legacy top-level decision and the
+  // current hookSpecificOutput.permissionDecision form.
+  res.end(JSON.stringify({
+    decision: 'block',
+    reason,
+    hookSpecificOutput: {
+      hookEventName:            'PreToolUse',
+      permissionDecision:       'deny',
+      permissionDecisionReason: reason,
+    },
+  }));
+  // Synthetic completion so the timeline shows the block instead of an
+  // eternally-pending node (a denied call emits no PostToolUse).
+  traceStore.addEvent({
+    id:           `evt-deny-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    sessionId:    event.sessionId,
+    kind:         'post_tool_use',
+    toolName:     event.toolName,
+    toolResponse: `⛔ ${label}: ${reason}`,
+    isError:      true,
+    timestamp:    Date.now(),
+  });
 }
 
 function hookTypeToKind(hookType: string): EventKind | null {

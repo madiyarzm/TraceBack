@@ -1,10 +1,15 @@
 {
   "name": "traceback",
-  "displayName": "TraceBack",
-  "description": "Live action map for AI agent sessions. See exactly what your agent read, edited, and ran.",
+  "displayName": "TraceBack — AI Agent Observability",
+  "description": "Live timeline, anomaly detection, breakpoints, and tripwires for AI coding agents. Watch, pause, and steer Claude Code sessions from your sidebar.",
   "version": "0.1.0",
-  "publisher": "traceback",
+  "publisher": "madiyarzhunussov",
   "license": "MIT",
+  "icon": "assets/icon.png",
+  "galleryBanner": {
+    "color": "#07090d",
+    "theme": "dark"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/madiyarzhunussov/TraceBack"
@@ -13,6 +18,8 @@
     "vscode": "^1.85.0"
   },
   "categories": [
+    "Visualization",
+    "Machine Learning",
     "Other"
   ],
   "keywords": [
@@ -20,7 +27,10 @@
     "agents",
     "observability",
     "claude",
-    "opentelemetry"
+    "claude-code",
+    "monitoring",
+    "anomaly-detection",
+    "human-in-the-loop"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -119,6 +129,29 @@
           "type": "number",
           "default": 11434,
           "description": "Port Ollama is listening on (default 11434)."
+        },
+        "traceback.tripwires": {
+          "type": "array",
+          "default": [],
+          "description": "Policy rules that block matching agent tool calls before they execute, across all sessions.",
+          "items": {
+            "type": "object",
+            "required": ["pattern"],
+            "properties": {
+              "tool": {
+                "type": "string",
+                "description": "Regex matched against the tool name (e.g. \"Bash\", \"Edit|Write\"). Omit to match any tool."
+              },
+              "pattern": {
+                "type": "string",
+                "description": "Regex (case-insensitive) matched against the tool name + its input JSON. A match blocks the call."
+              },
+              "reason": {
+                "type": "string",
+                "description": "Message fed back to the agent explaining why the call was blocked."
+              }
+            }
+          }
         }
       }
     }

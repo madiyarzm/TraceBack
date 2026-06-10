@@ -146,7 +146,12 @@ class TraceStore {
 
   addEvent(event: TraceEvent): void {
     const session = this.getOrCreateSession(event.sessionId);
+    // Claude Code fires Stop at the end of every TURN, not the session — so
+    // any new activity after a Stop means the session is live again. Without
+    // this reset, sessions were stuck "DONE" (hiding the pause button) after
+    // their first completed turn.
     if (event.kind === 'stop') session.stopped = true;
+    else if (session.stopped) session.stopped = false;
     session.events.push(event);
     const raw = buildNodes(session.events, session.stopped);
     session.nodes = applyBatchGrouping(raw);

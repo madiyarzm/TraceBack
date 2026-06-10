@@ -12,3 +12,7 @@ webview/vite.config.ts
 **/*.ts
 !out/**
 !webview/dist/**
+.claude/**
+docs/**
+index.html
+assets/demo.gif

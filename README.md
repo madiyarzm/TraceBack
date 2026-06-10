@@ -100,7 +100,26 @@ A pure, tail-only detector that re-evaluates on every event in O(1). Catches thr
 - **Error thrash** — 3 consecutive failed tool calls (the agent is making things worse).
 - **Silent stall** — a tool call pending for more than 60 seconds with no response.
 
-Anomalies self-clear the moment the condition stops holding — no dismiss buttons, no stale alerts.
+Anomalies fire a native VS Code notification (even with the sidebar hidden), permanently tag the implicated cards, and count on the odometer. Live alerts self-clear the moment the condition stops holding — the evidence trail doesn't.
+
+### Breakpoints for running agents
+Hit **⏸ pause** and the agent freezes at its next tool call — TraceBack holds the hook's HTTP response open, exactly like a breakpoint in a debugger. Inspect the timeline, then **▶ resume**… or type into the redirect box:
+
+> _"Stop trying to install that package — use the native library instead."_
+
+Your message is delivered into the agent's context as the reason its call was denied. The agent reads it and changes course, mid-run. Human-in-the-loop steering for black-box agents.
+
+### Tripwires
+Policy rules that protect **every session at once**, no human watching:
+
+```jsonc
+"traceback.tripwires": [
+  { "tool": "Bash",       "pattern": "rm -rf|sudo ", "reason": "Destructive commands are blocked." },
+  { "tool": "Edit|Write", "pattern": "\\.env|prod/", "reason": "Don't touch secrets or prod config." }
+]
+```
+
+A matching call is denied *before it executes* via Claude Code's hook decision protocol, the agent is told why, and you get a notification. The CLI asks per session, interactively; tripwires are fleet-wide policy.
 
 ### Multi-agent fleet view
 Run multiple Claude Code sessions in parallel? TraceBack lists all of them in a dropdown with live status badges (🟢 running, ⚪ done, 🔴 anomalous). Background anomalies surface as a pulsing pill next to the dropdown — you see a failure in agent #3 even while watching agent #1.
@@ -113,6 +132,9 @@ Connect a Groq or local Ollama instance and TraceBack generates a 1–2 sentence
 
 ### Chat assistant *(optional)*
 Ask questions about the current session directly in the webview. _"Why did the agent fail?"_, _"What files were touched?"_, _"Is this loop intentional?"_ — answered with the timeline already loaded as context.
+
+### Curated payloads & copy-everything
+Expanded cards show purpose-built views instead of raw dumps: Bash commands with exit pills, file ops with line/byte metrics, web calls as chips, plus a deterministic one-line outcome (`→ Error: Exit code 1 · npm error Missing script`). Raw input/output stays one click away — and everything is copyable: single outputs, single commands, or the **entire session as a markdown report** (`MD` button) ready to paste into a GitHub issue or hand to a fresh agent session as context.
 
 ### Export
 Snapshot the current timeline as a PNG or dump the raw session JSON — useful for bug reports, post-mortems, and sharing with teammates.
@@ -178,6 +200,7 @@ All settings live under `traceback.*` in VS Code settings.
 | `traceback.groqModel` | `"llama-3.1-8b-instant"` | Groq model for summaries and chat |
 | `traceback.ollamaModel` | `"llama3.2"` | Ollama model (must be pulled locally) |
 | `traceback.ollamaPort` | `11434` | Ollama port |
+| `traceback.tripwires` | `[]` | Policy rules that block matching tool calls before execution |
 
 ### Enabling the Narrative Engine
 
