@@ -1,8 +1,8 @@
 {
   "name": "traceback-ai",
-  "displayName": "TraceBack — AI Agent Observability",
+  "displayName": "TraceBack \u2014 AI Agent Observability",
   "description": "Live timeline, anomaly detection, breakpoints, and tripwires for AI coding agents. Watch, pause, and steer Claude Code sessions from your sidebar.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "madiyarzhunussov",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -136,7 +136,9 @@
           "description": "Policy rules that block matching agent tool calls before they execute, across all sessions.",
           "items": {
             "type": "object",
-            "required": ["pattern"],
+            "required": [
+              "pattern"
+            ],
             "properties": {
               "tool": {
                 "type": "string",
