@@ -1,5 +1,5 @@
 {
-  "name": "traceback",
+  "name": "traceback-ai",
   "displayName": "TraceBack — AI Agent Observability",
   "description": "Live timeline, anomaly detection, breakpoints, and tripwires for AI coding agents. Watch, pause, and steer Claude Code sessions from your sidebar.",
   "version": "0.1.0",
