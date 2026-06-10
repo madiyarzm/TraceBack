@@ -43,7 +43,13 @@ function ToolNode({ data, selected }: NodeProps) {
   return (
     <div
       style={{
+        // Fixed box: dagre is told exactly { w: 228, h: 50 } in App.tsx.
+        // boxSizing + overflow:hidden guarantee the painted size never drifts
+        // from the number dagre used, so nodes can't overlap.
         width: 228,
+        height: 50,
+        boxSizing: 'border-box',
+        overflow: 'hidden',
         background: 'var(--tb-surface)',
         border: `1px solid ${selected ? color + '60' : 'var(--tb-border)'}`,
         borderLeft: `3px solid ${color}`,

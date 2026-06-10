@@ -7,12 +7,19 @@ function ThinkingNode(_: NodeProps) {
   return (
     <div
       style={{
+        // Fixed box matching dagre's { w: 132, h: 30 } (App.tsx). Was inline-flex
+        // with content-driven width, which lied to dagre and drifted the layout.
         fontFamily: 'var(--tb-ui-font)',
         background: 'rgba(88, 166, 255, 0.05)',
         border: '1px dashed rgba(88, 166, 255, 0.25)',
         borderRadius: 4,
-        display: 'inline-flex',
+        width: 132,
+        height: 30,
+        boxSizing: 'border-box',
+        overflow: 'hidden',
+        display: 'flex',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: 8,
         padding: '5px 12px',
         cursor: 'default',

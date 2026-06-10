@@ -34,6 +34,14 @@ const TOOL_ICON: Record<string, string> = {
 const HANDLE_STYLE = { background: 'transparent', border: 'none', width: 0, height: 0 };
 const MAX_VISIBLE  = 3;
 
+// MUST stay in sync with batchNodeHeight() in App.tsx so the painted box exactly
+// matches the rectangle dagre lays out.
+function batchNodeHeight(itemCount: number): number {
+  const visible  = Math.min(itemCount, 3);
+  const overflow = itemCount > 3 ? 16 : 0;
+  return 60 + visible * 22 + overflow;
+}
+
 function BatchNode({ data, selected }: NodeProps) {
   const d       = data as BatchNodeData;
   const color   = STATUS_COLOR[d.status];
@@ -45,6 +53,9 @@ function BatchNode({ data, selected }: NodeProps) {
     <div
       style={{
         width: 244,
+        height: batchNodeHeight(d.batchItems.length),
+        boxSizing: 'border-box',
+        overflow: 'hidden',
         background: 'var(--tb-surface)',
         border: `1px solid ${selected ? color + '60' : 'var(--tb-border)'}`,
         borderLeft: `3px solid ${color}`,
