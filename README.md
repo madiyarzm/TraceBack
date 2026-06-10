@@ -181,21 +181,57 @@ All settings live under `traceback.*` in VS Code settings.
 
 ### Enabling the Narrative Engine
 
-**Groq** (free tier at [console.groq.com](https://console.groq.com)):
+The AI helper (plain-English summary + sidebar chat) is **opt-in** and supports two backends. You can configure it via VS Code settings *or* a local `.env` file at the repo root — whichever is easier.
+
+#### Option A — Groq (cloud, free tier, recommended)
+
+1. Sign up at [**console.groq.com**](https://console.groq.com) — it's free, no credit card required.
+2. Open the menu in the top-right corner → **API Keys** → **Create API Key**.
+3. Copy the generated key (starts with `gsk_…`).
+4. Drop it into a `.env` file at the repo root:
+
+   ```bash
+   cp .env.example .env
+   # then edit .env and paste your key
+   ```
+
+   ```dotenv
+   # .env
+   GROQ_API_KEY=gsk_your_key_here
+   # GROQ_MODEL=llama-3.1-8b-instant   # optional override
+   ```
+
+5. Reload the VS Code window (`Cmd+R` in the Extension Development Host). TraceBack will auto-detect the key, log `Loaded .env keys: GROQ_API_KEY` to its output channel, and start producing live narrative summaries.
+
+> `.env` is git-ignored. The only env file ever committed is `.env.example`.
+
+If you'd rather use VS Code settings (e.g. for a team-shared workspace), the equivalent is:
+
 ```jsonc
 {
   "traceback.llmProvider": "groq",
-  "traceback.groqApiKey": "gsk_...",
-  "traceback.groqModel": "llama-3.1-8b-instant"
+  "traceback.groqApiKey":  "gsk_..."
 }
 ```
 
-**Ollama** (fully local, no API key):
+VS Code settings always override `.env` when both are set.
+
+#### Option B — Ollama (fully local, no API key)
+
+Install Ollama from [ollama.com](https://ollama.com), pull a model, then:
+
 ```jsonc
 {
   "traceback.llmProvider": "ollama",
   "traceback.ollamaModel": "llama3.2"
 }
+```
+
+or in `.env`:
+
+```dotenv
+OLLAMA_MODEL=llama3.2
+# OLLAMA_PORT=11434
 ```
 
 ---
@@ -211,6 +247,7 @@ src/
 ├── tokenReader.ts      # tails the Claude transcript for real token usage
 ├── hookManager.ts      # reads/writes ~/.claude/settings.json
 ├── llmClient.ts        # Groq + Ollama abstraction
+├── envLoader.ts        # tiny zero-dep .env loader (workspace + extension root)
 └── webviewProvider.ts  # bridges the extension ↔ React webview
 
 webview/src/
