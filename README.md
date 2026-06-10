@@ -25,7 +25,7 @@ You started a Claude Code session and walked away. The agent is reading files, r
 ## Demo
 
 <div align="center">
-  <img src="assets/demo.gif" alt="TraceBack live action map — nodes appear in real time as Claude Code runs" width="420" />
+  <img src="assets/traceback_demo.gif" alt="TraceBack — live agent timeline with anomaly detection, pause and redirect" width="720" />
 </div>
 
 ---
