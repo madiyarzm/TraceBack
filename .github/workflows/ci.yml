@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20.x, 22.x]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install extension deps
+        run: npm ci
+
+      - name: Install webview deps
+        working-directory: webview
+        run: npm ci
+
+      - name: Compile extension (tsc)
+        run: npm run compile
+
+      - name: Build webview (vite)
+        run: npm run build:webview
+
+      - name: Run unit tests
+        run: npm test
