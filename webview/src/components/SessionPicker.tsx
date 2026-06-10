@@ -1,27 +1,39 @@
-import vscode from '../vscodeApi';
-
 export interface SessionSummary {
-  id: string;
-  label: string;
-  startedAt: number;
-  nodeCount: number;
-  stopped: boolean;
+  id:         string;
+  label:      string;
+  startedAt:  number;
+  nodeCount:  number;
+  stopped:    boolean;
+  anomalous?: boolean;
 }
 
 interface Props {
   sessions: SessionSummary[];
-  activeId: string | null;
-  onSelect: (id: string) => void;
+  /** Session currently shown. */
+  displayId: string | null;
+  /** Explicit user pin; null = following the most recently updated session. */
+  pinnedId: string | null;
+  onSelect: (id: string | null) => void;
 }
 
-export default function SessionPicker({ sessions, activeId, onSelect }: Props) {
-  if (sessions.length <= 1) return null;
+function badge(s: SessionSummary): string {
+  if (s.anomalous) return '🔴';
+  if (!s.stopped)  return '🟢';
+  return '⚪';
+}
 
-  function handleChange(e: React.ChangeEvent<HTMLSelectElement>) {
-    const id = e.target.value;
-    onSelect(id);
-    vscode.postMessage({ type: 'switch_session', sessionId: id });
-  }
+/**
+ * Fleet selector: one entry per agent session, labeled by working directory,
+ * with a live status badge. Anomalies in sessions that are NOT currently
+ * displayed also surface as a red alert pill next to the dropdown, so a
+ * background failure is visible without opening the menu.
+ */
+export default function SessionPicker({ sessions, displayId, pinnedId, onSelect }: Props) {
+  if (sessions.length === 0) return null;
+
+  const backgroundAnomalies = sessions.filter(
+    (s) => s.anomalous && s.id !== displayId
+  ).length;
 
   return (
     <div style={{
@@ -29,11 +41,14 @@ export default function SessionPicker({ sessions, activeId, onSelect }: Props) {
       alignItems: 'center',
       gap: 8,
       padding: '0 10px',
-      height: 28,
+      height: 30,
       borderBottom: '1px solid var(--tb-border)',
       background: 'var(--tb-surface)',
-      fontFamily: 'var(--tb-font)',
+      fontFamily: 'var(--tb-ui-font)',
       flexShrink: 0,
+      position: 'sticky',
+      top: 0,
+      zIndex: 30,
     }}>
       <span style={{
         fontSize: 9,
@@ -42,23 +57,18 @@ export default function SessionPicker({ sessions, activeId, onSelect }: Props) {
         color: 'var(--tb-text-muted)',
         flexShrink: 0,
       }}>
-        SESSION
+        AGENTS · {sessions.length}
       </span>
 
-      <div style={{
-        width: 1,
-        height: 12,
-        background: 'var(--tb-border)',
-        flexShrink: 0,
-      }} />
+      <div style={{ width: 1, height: 12, background: 'var(--tb-border)', flexShrink: 0 }} />
 
       <select
-        value={activeId ?? ''}
-        onChange={handleChange}
+        value={pinnedId ?? ''}
+        onChange={(e) => onSelect(e.target.value || null)}
         style={{
           flex: 1,
           fontSize: 10,
-          fontFamily: 'var(--tb-font)',
+          fontFamily: 'var(--tb-ui-font)',
           letterSpacing: '0.04em',
           background: 'transparent',
           color: 'var(--tb-text)',
@@ -67,16 +77,35 @@ export default function SessionPicker({ sessions, activeId, onSelect }: Props) {
           cursor: 'pointer',
         }}
       >
+        <option value="" style={{ background: 'var(--tb-surface)' }}>
+          ⟲ auto — follow latest activity
+        </option>
         {sessions.map((s) => (
           <option
             key={s.id}
             value={s.id}
             style={{ background: 'var(--tb-surface)', color: 'var(--tb-text)' }}
           >
-            {s.label}  ·  {s.nodeCount} actions{s.stopped ? '' : '  ·  LIVE'}
+            {badge(s)} {s.label} · {s.nodeCount} actions{s.stopped ? '' : ' · LIVE'}
           </option>
         ))}
       </select>
+
+      {backgroundAnomalies > 0 && (
+        <span style={{
+          flexShrink: 0,
+          fontSize: 9,
+          fontWeight: 700,
+          color: '#ffa198',
+          background: 'rgba(248,81,73,0.18)',
+          border: '1px solid rgba(248,81,73,0.5)',
+          borderRadius: 3,
+          padding: '1px 6px',
+          animation: 'pendingPulse 1.2s ease-in-out infinite',
+        }}>
+          ⚠ {backgroundAnomalies}
+        </span>
+      )}
     </div>
   );
 }
