@@ -4,7 +4,7 @@
 
 **Real-time observability for AI coding agents — inside VS Code.**
 
-[![CI](https://github.com/madiyarzhunussov/TraceBack/actions/workflows/ci.yml/badge.svg)](https://github.com/madiyarzhunussov/TraceBack/actions/workflows/ci.yml)
+[![CI](https://github.com/madiyarzm/TraceBack/actions/workflows/ci.yml/badge.svg)](https://github.com/madiyarzm/TraceBack/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.85.0-007ACC?logo=visual-studio-code)](https://code.visualstudio.com)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript)](https://www.typescriptlang.org)
@@ -49,7 +49,7 @@ Most "agent observability" tools (Langfuse, Arize, LangSmith) ship cloud dashboa
 
 ```bash
 # 1. Clone & install
-git clone https://github.com/madiyarzhunussov/TraceBack
+git clone https://github.com/madiyarzm/TraceBack
 cd TraceBack
 npm install
 cd webview && npm install && cd ..
@@ -161,7 +161,7 @@ TraceBack surgically adds and removes only its own entries in `~/.claude/setting
 ### From source (recommended while pre-release)
 
 ```bash
-git clone https://github.com/madiyarzhunussov/TraceBack
+git clone https://github.com/madiyarzm/TraceBack
 cd TraceBack
 npm install && cd webview && npm install && cd ..
 npm run compile && npm run build:webview
