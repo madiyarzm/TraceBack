@@ -4,6 +4,7 @@
 
 **Real-time observability for AI coding agents — inside VS Code.**
 
+[![CI](https://github.com/madiyarzhunussov/TraceBack/actions/workflows/ci.yml/badge.svg)](https://github.com/madiyarzhunussov/TraceBack/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%5E1.85.0-007ACC?logo=visual-studio-code)](https://code.visualstudio.com)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript)](https://www.typescriptlang.org)
@@ -13,11 +14,9 @@
 
 ---
 
-You opened a Claude Code session. The agent starts running. Files are being read. Commands are executing. Edits are landing somewhere.
+You started a Claude Code session and walked away. The agent is reading files, running commands, making edits. Five minutes later you come back — and you have no idea what it did.
 
-**You have no idea what's happening — until it's done (or broken).**
-
-TraceBack fixes that. It hooks directly into Claude Code's hook system and streams every tool call into a live, interactive action map in your VS Code sidebar as it happens.
+**TraceBack fixes that.** It hooks directly into Claude Code's hook system and streams every tool call into a live, scrolling action timeline in your VS Code sidebar — with anomaly detection that catches loops, error storms, and silent stalls *while the agent is still running*.
 
 > _"What did my agent just do? Why is it stuck? Did it loop? What file did it touch?"_ — answered in real time, without leaving your editor.
 
@@ -26,60 +25,100 @@ TraceBack fixes that. It hooks directly into Claude Code's hook system and strea
 ## Demo
 
 <div align="center">
-  <img src="assets/demo.gif" alt="TraceBack live action map — nodes appear in real time as Claude Code runs" width="400" />
+  <img src="assets/demo.gif" alt="TraceBack live action map — nodes appear in real time as Claude Code runs" width="420" />
 </div>
+
+---
+
+## Why TraceBack?
+
+Most "agent observability" tools (Langfuse, Arize, LangSmith) ship cloud dashboards meant for production traffic. TraceBack is the opposite: **local-first, in-editor, zero-setup, real-time**, focused on the dev loop.
+
+| | Cloud dashboards | Terminal output | **TraceBack** |
+|---|---|---|---|
+| Setup | API keys, SDKs, project ids | none | **zero** — auto-installs hooks |
+| Latency | seconds | live but ephemeral | **live** + scrollable |
+| Loop / stall detection | none | none | **built-in** |
+| Multi-agent visibility | one project per dashboard | one terminal each | **fleet view in one panel** |
+| Token / cost view | yes | no | **real usage from transcript** |
+| Cost | $$$ tier | free | **free, local** |
+
+---
+
+## Quickstart
+
+```bash
+# 1. Clone & install
+git clone https://github.com/madiyarzhunussov/TraceBack
+cd TraceBack
+npm install
+cd webview && npm install && cd ..
+
+# 2. Build
+npm run compile && npm run build:webview
+
+# 3. Open in VS Code and press F5
+#    (launches the Extension Development Host with TraceBack loaded)
+```
+
+Click the TraceBack icon (`$(pulse)`) in the activity bar, then run any Claude Code session in your terminal. Tool calls will start appearing in the sidebar as they happen.
 
 ---
 
 ## How it works
 
-TraceBack injects lightweight `curl` hooks into `~/.claude/settings.json` on activation. Every time Claude Code fires `PreToolUse`, `PostToolUse`, or `Stop`, the hook payload is `POST`ed to a local HTTP server on `localhost:7777`. The extension parses those events, builds a session timeline, and streams updates into a React + ReactFlow webview in the VS Code sidebar.
+TraceBack injects lightweight `curl` hooks into `~/.claude/settings.json` on activation. Every time Claude Code fires `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, or `Stop`, the hook payload is `POST`ed to a local HTTP server on `localhost:7777`. The extension parses those events, builds a session timeline, and streams updates into a React webview rendered in the VS Code sidebar.
 
 ```
 Claude Code CLI
-    │  PreToolUse / PostToolUse / Stop hook fires
+    │  PreToolUse / PostToolUse / PostToolUseFailure / Stop hook fires
     │  curl → POST localhost:7777/event
     ▼
 TraceBack server  (Node.js, in-process)
     │  parses payload → TraceEvent
     ▼
-TraceStore  (in-memory session state)
+TraceStore  (in-memory session state) ──► AnomalyDetector  (pure, tail-only, O(1))
     │  onDidUpdate event
     ▼
-Webview  (React + ReactFlow + Tailwind)
-    └─ rendered in VS Code sidebar, live
+Webview  (React + Vite)
+    └─ live timeline + metrics odometer, rendered in the sidebar
 ```
 
-No build step in the hot path. No polling. Zero latency between a tool call firing and the node appearing in your action map.
+No sockets between extension and webview — just VS Code's `postMessage`. No polling. Zero latency between a tool call firing and the card appearing in the timeline.
 
 ---
 
 ## Features
 
-### Live action map
-Every tool call renders as a node — `pending → success / error` — in real time. Edges animate while a step is in-flight and settle once it resolves. Click any node to inspect the full tool input and output in a slide-over detail drawer.
+### Live action timeline
+Every tool call renders as a card — `pending → success / error` — in real time. Click any card to inspect the full tool input and output inline. File edits (`Edit`, `Write`, `MultiEdit`) render as a Git-style line diff.
 
-### Stumble detection
-TraceBack watches for two failure modes automatically:
-- **Loop detection** — three identical tool+label pairs in a row trigger a red alert with a halo animation on the looping nodes.
-- **Timeout detection** — a node pending for more than 45 seconds raises a timeout alert.
+### Anomaly engine
+A pure, tail-only detector that re-evaluates on every event in O(1). Catches three failure modes automatically:
 
-Both alerts surface immediately in the UI without requiring any configuration.
+- **Repeater** — 4 identical tool calls in a row (the agent is stuck in a loop).
+- **Error thrash** — 3 consecutive failed tool calls (the agent is making things worse).
+- **Silent stall** — a tool call pending for more than 60 seconds with no response.
 
-### Multi-session swimlane view
-Running multiple agents in parallel? When more than one session is active, TraceBack switches to a swimlane layout — one horizontal lane per session, each with its own personality badge and color accent. All lanes update live on the same canvas.
+Anomalies self-clear the moment the condition stops holding — no dismiss buttons, no stale alerts.
 
-### Narrative Engine _(optional)_
-Connect a Groq or local Ollama instance and TraceBack generates a 1–2 sentence plain-English summary of the session after each tool call. No jargon, no log-scrolling — just "It's been reading config files and is about to make its first edit."
+### Multi-agent fleet view
+Run multiple Claude Code sessions in parallel? TraceBack lists all of them in a dropdown with live status badges (🟢 running, ⚪ done, 🔴 anomalous). Background anomalies surface as a pulsing pill next to the dropdown — you see a failure in agent #3 even while watching agent #1.
 
-### Chat assistant _(optional)_
-Ask questions about the current session timeline directly in the webview. The LLM answers with the node context already loaded: _"Why did the agent fail?"_, _"What files were touched?"_, _"Is this loop intentional?"_
+### Real token & cost metrics
+Pulls actual token usage from the Claude Code transcript (`input + cache_read + cache_creation + output`) instead of estimating. Falls back to a character-based heuristic when the transcript isn't reachable.
+
+### Narrative Engine *(optional)*
+Connect a Groq or local Ollama instance and TraceBack generates a 1–2 sentence plain-English summary of the session after each tool call. _"It's been reading config files and is about to make its first edit."_
+
+### Chat assistant *(optional)*
+Ask questions about the current session directly in the webview. _"Why did the agent fail?"_, _"What files were touched?"_, _"Is this loop intentional?"_ — answered with the timeline already loaded as context.
 
 ### Export
-Snapshot the current action map as a PNG or dump the raw session JSON — useful for bug reports, post-mortems, or sharing with teammates.
+Snapshot the current timeline as a PNG or dump the raw session JSON — useful for bug reports, post-mortems, and sharing with teammates.
 
 ### Auto hook management
-TraceBack writes its hooks into `~/.claude/settings.json` on activation and removes them cleanly on deactivation. It never overwrites unrelated config — it surgically adds and removes its own entries only.
+TraceBack surgically adds and removes only its own entries in `~/.claude/settings.json` — never touches unrelated config.
 
 ---
 
@@ -90,42 +129,32 @@ TraceBack writes its hooks into `~/.claude/settings.json` on activation and remo
 | VS Code | `^1.85.0` |
 | [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) | latest |
 | `curl` | on `PATH` |
-| Node.js _(dev only)_ | `^20` |
-| Groq API key or Ollama _(optional)_ | for Narrative Engine |
+| Node.js *(dev only)* | `^20` |
+| Groq API key or Ollama *(optional)* | for Narrative Engine |
 
 ---
 
 ## Installation
 
-### From source
+### From source (recommended while pre-release)
 
 ```bash
 git clone https://github.com/madiyarzhunussov/TraceBack
 cd TraceBack
-npm install
-npm run compile
-npm run build:webview
+npm install && cd webview && npm install && cd ..
+npm run compile && npm run build:webview
 ```
 
-Then open the repo in VS Code and press **F5** to launch the Extension Development Host, or package and install it:
+Open the repo in VS Code and press **F5** to launch the Extension Development Host. To install it permanently:
 
 ```bash
 npm run package                           # produces traceback-0.1.0.vsix
 code --install-extension traceback-0.1.0.vsix
 ```
 
-Once installed, the extension activates automatically on VS Code startup — no manual setup required.
-
 ---
 
-## Usage
-
-1. Install the extension.
-2. Open the **TraceBack** panel in the activity bar (look for the `$(pulse)` icon).
-3. Start a Claude Code session in your terminal.
-4. Watch tool calls appear in the panel as they happen.
-
-### Commands
+## Commands
 
 | Command | Description |
 |---|---|
@@ -152,7 +181,7 @@ All settings live under `traceback.*` in VS Code settings.
 
 ### Enabling the Narrative Engine
 
-**Groq** (free tier available at [console.groq.com](https://console.groq.com)):
+**Groq** (free tier at [console.groq.com](https://console.groq.com)):
 ```jsonc
 {
   "traceback.llmProvider": "groq",
@@ -161,7 +190,7 @@ All settings live under `traceback.*` in VS Code settings.
 }
 ```
 
-**Ollama** (fully local, no API key needed):
+**Ollama** (fully local, no API key):
 ```jsonc
 {
   "traceback.llmProvider": "ollama",
@@ -176,42 +205,64 @@ All settings live under `traceback.*` in VS Code settings.
 ```
 src/
 ├── extension.ts        # activation, command registration, LLM wiring
-├── server.ts           # HTTP server that receives hook payloads
-├── traceStore.ts       # session state, node building, loop/timeout detection
+├── server.ts           # HTTP server that receives Claude Code hook payloads
+├── traceStore.ts       # session state, node building, batch grouping
+├── anomalyDetector.ts  # pure tail-only detector: repeater / error_thrash / stall
+├── tokenReader.ts      # tails the Claude transcript for real token usage
 ├── hookManager.ts      # reads/writes ~/.claude/settings.json
 ├── llmClient.ts        # Groq + Ollama abstraction
 └── webviewProvider.ts  # bridges the extension ↔ React webview
 
 webview/src/
-├── App.tsx             # ReactFlow canvas, swimlane layout, message handling
-├── nodes/              # ToolNode, ThinkingNode, BatchNode, SwimLaneNode
-└── components/         # DetailDrawer, SummaryBar, StumbleAlert, Toolbar, SessionPicker
+├── App.tsx                       # fleet state machine, scroll/follow logic
+├── metrics.ts                    # session metrics (duration, tokens, cost)
+└── components/
+    ├── TimelineCard.tsx          # one tool call → one card
+    ├── SessionOdometer.tsx       # sticky metrics bar (time / actions / errors / tokens)
+    ├── SessionPicker.tsx         # multi-session dropdown with status badges
+    ├── DiffViewer.tsx            # LCS line diff for Edit/Write
+    ├── Toolbar.tsx               # LIVE/DONE pill + export/clear buttons
+    └── EmptyState.tsx
 ```
 
-The extension and webview communicate over VS Code's `postMessage` / `onDidReceiveMessage` channel. No sockets, no shared memory — just clean VS Code API primitives.
+Extension ↔ webview communicate exclusively over `postMessage` / `onDidReceiveMessage`. No sockets, no shared memory — just clean VS Code API primitives.
 
 ---
 
 ## Development
 
 ```bash
-# Extension (TypeScript, incremental)
-npm run watch
+npm run watch          # tsc -w  (extension host, incremental)
+npm run dev:webview    # vite dev server (webview HMR)
 
-# Webview (React + Vite HMR)
-npm run dev:webview
-
-# Lint
-npm run lint
-
-# Full production build
-npm run compile && npm run build:webview
+npm run compile        # full extension build
+npm run build:webview  # full webview build
+npm test               # vitest unit tests
+npm run lint           # eslint
 ```
 
 Press **F5** in VS Code to launch the Extension Development Host with the extension loaded.
+
+### Testing
+
+Unit tests cover the pure modules — the anomaly detector and the trace store — and run on every push via GitHub Actions on Node 20 and 22.
+
+```bash
+npm test           # one-shot
+npm run test:watch # watch mode
+```
+
+---
+
+## Roadmap
+
+- **OpenTelemetry GenAI spans.** Emit `gen_ai.*`-tagged spans per session/tool call so TraceBack can forward to Langfuse / Phoenix / Honeycomb while staying the live local viewer.
+- **Beyond Claude Code.** Generic OTLP-shaped adapter so any agent (LangGraph, OpenAI Agents SDK, MCP servers) can stream into TraceBack.
+- **Persistent session history.** Save sessions to disk for post-hoc audit and replay.
+- **Smarter stumbles.** Near-duplicate edits, thrashing on the same file, runaway cost detection.
 
 ---
 
 ## License
 
-[MIT](LICENSE) — built by [Madiyar Zhunussov](https://github.com/madiyarzhunussov)
+[MIT](LICENSE) — built by [Madiyar Zhunussov](https://github.com/madiyarzhunussov).
