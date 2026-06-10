@@ -9,6 +9,8 @@ interface ClaudeSettings {
   hooks?: {
     PreToolUse?: HookEntry[];
     PostToolUse?: HookEntry[];
+    // Fires when a tool call FAILS — PostToolUse only fires on success.
+    PostToolUseFailure?: HookEntry[];
     Stop?: HookEntry[];
     Notification?: HookEntry[];
   };
@@ -68,6 +70,7 @@ export async function installHooks(port: number, outputChannel: vscode.OutputCha
   const hookTypes: (keyof NonNullable<ClaudeSettings['hooks']>)[] = [
     'PreToolUse',
     'PostToolUse',
+    'PostToolUseFailure',
     'Stop',
   ];
 
@@ -114,6 +117,7 @@ export async function removeHooks(outputChannel: vscode.OutputChannel): Promise<
   const hookTypes: (keyof NonNullable<ClaudeSettings['hooks']>)[] = [
     'PreToolUse',
     'PostToolUse',
+    'PostToolUseFailure',
     'Stop',
   ];
 

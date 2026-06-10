@@ -103,19 +103,42 @@ function handleHookPayload(payload: Record<string, unknown>): void {
       typeof payload.tool_response === 'string'
         ? payload.tool_response
         : JSON.stringify(payload.tool_response),
-    isError: Boolean(payload.tool_response_is_error),
+    isError: hookType === 'PostToolUseFailure' || isErrorResponse(payload.tool_response),
+    transcriptPath: payload.transcript_path as string | undefined,
+    cwd: payload.cwd as string | undefined,
     timestamp: Date.now(),
   };
 
   traceStore.addEvent(event);
 }
 
+/**
+ * Defensive error sniffing for PostToolUse payloads. Verified against real
+ * transcripts: failed Bash calls return tool_response as a plain string
+ * starting with "Error:", while successes return an {stdout, stderr, ...}
+ * object. The flag checks cover other tools / future payload shapes.
+ */
+function isErrorResponse(resp: unknown): boolean {
+  if (typeof resp === 'string') return /^Error[:\s]/i.test(resp);
+  if (resp && typeof resp === 'object') {
+    const r = resp as Record<string, unknown>;
+    if (r.is_error === true || r.isError === true) return true;
+    if (r.success === false) return true;
+    if (typeof r.exitCode === 'number' && r.exitCode !== 0) return true;
+    if (typeof r.exit_code === 'number' && r.exit_code !== 0) return true;
+    if (r.interrupted === true) return true;
+  }
+  return false;
+}
+
 function hookTypeToKind(hookType: string): EventKind | null {
   switch (hookType) {
-    case 'PreToolUse':  return 'pre_tool_use';
-    case 'PostToolUse': return 'post_tool_use';
-    case 'Stop':        return 'stop';
-    case 'Notification': return 'notification';
+    case 'PreToolUse':         return 'pre_tool_use';
+    case 'PostToolUse':        return 'post_tool_use';
+    // Failures arrive on a dedicated event — PostToolUse only fires on success
+    case 'PostToolUseFailure': return 'post_tool_use';
+    case 'Stop':               return 'stop';
+    case 'Notification':       return 'notification';
     default:
       return null;
   }
