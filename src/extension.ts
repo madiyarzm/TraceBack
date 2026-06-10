@@ -100,9 +100,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     })
   );
 
-  // Timeout stumble detection — check every 5 seconds
-  const stumbleTimer = setInterval(() => traceStore.checkTimeouts(), 5000);
-  context.subscriptions.push({ dispose: () => clearInterval(stumbleTimer) });
+  // Time-based anomaly detection (silent stalls) — check every 5 seconds
+  const anomalyTimer = setInterval(() => traceStore.checkStalls(), 5000);
+  context.subscriptions.push({ dispose: () => clearInterval(anomalyTimer) });
 
   context.subscriptions.push(
     vscode.commands.registerCommand('traceback.openMap', () => {
