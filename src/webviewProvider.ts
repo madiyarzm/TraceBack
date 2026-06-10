@@ -45,16 +45,24 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
     const payload = {
       type: 'session_update',
       session,
-      allSessions: traceStore.getAllSessions().map((s) => ({
+      // Only surface sessions that actually have activity. Empty sessions
+      // (e.g. the fresh session created by Clear, or a session that errored
+      // before any tool ran) must not spawn ghost swimlanes or trip the
+      // swimlane-mode threshold.
+      allSessions: traceStore.getAllSessions()
+        .filter((s) => s.nodes.some((n) => n.toolName !== '__thinking__'))
+        .map((s) => ({
         id:           s.id,
         label:        s.label,
         startedAt:    s.startedAt,
         nodeCount:    s.nodes.filter((n) => n.toolName !== '__thinking__').length,
         stopped:      s.stopped,
         nodes:        s.nodes,
-        stumbleAlert: s.stumbleAlert,
-        aiSummary:    s.aiSummary,
-      })),
+        anomaly:       s.anomaly,
+        aiSummary:     s.aiSummary,
+        contextTokens: s.contextTokens,
+        cwd:           s.cwd,
+        })),
     };
     this._view?.webview.postMessage(payload);
     this._panel?.webview.postMessage(payload);
@@ -132,8 +140,11 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
 
   private _getHtml(webview: vscode.Webview): string {
     const distUri   = vscode.Uri.joinPath(this._extensionUri, 'webview', 'dist');
-    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(distUri, 'assets', 'index.js'));
-    const styleUri  = webview.asWebviewUri(vscode.Uri.joinPath(distUri, 'assets', 'index.css'));
+    // Cache-bust: the bundle filename is stable (no content hash), so without a
+    // changing query string the webview serves a stale cached copy across reloads.
+    const v         = Date.now();
+    const scriptUri = `${webview.asWebviewUri(vscode.Uri.joinPath(distUri, 'assets', 'index.js'))}?v=${v}`;
+    const styleUri  = `${webview.asWebviewUri(vscode.Uri.joinPath(distUri, 'assets', 'index.css'))}?v=${v}`;
 
     const nonce = getNonce();
     const csp = [
