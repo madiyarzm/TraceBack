@@ -1,4 +1,6 @@
 import * as vscode from 'vscode';
+import { AnomalyState, detectAnomaly } from './anomalyDetector';
+import { readContextTokens } from './tokenReader';
 
 export type EventKind =
   | 'pre_tool_use'
@@ -29,6 +31,9 @@ export interface TraceEvent {
   toolInput?: Record<string, unknown>;
   toolResponse?: string;
   isError?: boolean;
+  transcriptPath?: string;
+  /** Working directory of the agent session (from the hook payload). */
+  cwd?: string;
   timestamp: number;
 }
 
@@ -36,6 +41,7 @@ export interface BatchItem {
   label: string;
   detail?: string;
   status: NodeStatus;
+  durationMs?: number;
 }
 
 export interface TraceNode {
@@ -47,18 +53,11 @@ export interface TraceNode {
   eventIds: string[];
   detail?: string;
   toolInput?: Record<string, unknown>;
-  isLooping?: boolean;
   timestamp: number;
+  /** Wall-clock ms between PreToolUse and PostToolUse for this call. */
+  durationMs?: number;
   isBatch?: boolean;
   batchItems?: BatchItem[];
-}
-
-export interface StumbleAlert {
-  type: 'loop' | 'timeout';
-  toolName: string;
-  nodeId: string;
-  label: string;
-  detectedAt: number;
 }
 
 export interface TraceSession {
@@ -68,8 +67,13 @@ export interface TraceSession {
   stopped: boolean;
   events: TraceEvent[];
   nodes: TraceNode[];
-  stumbleAlert?: StumbleAlert;
+  anomaly?: AnomalyState;
   aiSummary?: string;
+  transcriptPath?: string;
+  /** Real token usage read from the Claude Code transcript (not estimated). */
+  contextTokens?: number;
+  /** Working directory of the agent; its tail segment becomes the label. */
+  cwd?: string;
 }
 
 class TraceStore {
@@ -91,6 +95,8 @@ class TraceStore {
     };
     this._sessions.set(sessionId, session);
     this._activeSessionId = sessionId;
+    // Verification log: each distinct agent session shows up once here.
+    console.log(`[TraceBack] tracking new session ${sessionId} (${this._sessions.size} total)`);
     return session;
   }
 
@@ -108,6 +114,20 @@ class TraceStore {
     return this.startSession(id);
   }
 
+  /**
+   * Route an incoming event to the session named by its own sessionId,
+   * creating that session if it does not exist yet. The most recently
+   * active session id is updated so the single-session view follows the
+   * latest agent, while all sessions remain individually addressable for
+   * the swimlane view.
+   */
+  getOrCreateSession(sessionId: string): TraceSession {
+    let s = this._sessions.get(sessionId);
+    if (!s) s = this.startSession(sessionId);
+    this._activeSessionId = sessionId;
+    return s;
+  }
+
   getAllSessions(): TraceSession[] {
     return Array.from(this._sessions.values()).sort((a, b) => b.startedAt - a.startedAt);
   }
@@ -117,43 +137,66 @@ class TraceStore {
   }
 
   addEvent(event: TraceEvent): void {
-    const session = this.getOrCreateActiveSession();
+    const session = this.getOrCreateSession(event.sessionId);
     if (event.kind === 'stop') session.stopped = true;
     session.events.push(event);
     const raw = buildNodes(session.events, session.stopped);
     session.nodes = applyBatchGrouping(raw);
 
-    // Loop detection: same tool + same label repeated 3× in sequence
-    if (event.kind === 'pre_tool_use' && !session.stumbleAlert) {
-      const alert = detectLoop(raw);
-      if (alert) {
-        session.stumbleAlert = alert;
-        // Mark the three looping nodes so the UI can apply a halo animation
-        const real = raw.filter((n) => n.toolName !== '__thinking__');
-        for (const n of real.slice(-3)) n.isLooping = true;
-      }
+    // Recompute anomaly state on every event (O(1), tail-only). A finished
+    // session can't be anomalous; otherwise the state self-clears as soon as
+    // the triggering condition stops holding.
+    session.anomaly = session.stopped
+      ? undefined
+      : detectAnomaly(session.events, Date.now());
+
+    if (event.transcriptPath) session.transcriptPath = event.transcriptPath;
+    if (event.cwd && session.cwd !== event.cwd) {
+      session.cwd   = event.cwd;
+      session.label = event.cwd.split('/').filter(Boolean).pop() ?? session.label;
     }
-    // Clear stumble alert when session finishes cleanly
-    if (session.stopped) session.stumbleAlert = undefined;
+    this._maybeRefreshTokens(session);
 
     this._onDidUpdate.fire(session);
   }
 
-  checkTimeouts(): void {
-    const TIMEOUT_MS = 45_000;
+  /**
+   * Throttled async refresh of real token usage from the session transcript.
+   * At most one tail-read per session per 2s; fires an update only when the
+   * number actually changes.
+   */
+  private _tokenReadAt = new Map<string, number>();
+
+  private _maybeRefreshTokens(session: TraceSession): void {
+    const path = session.transcriptPath;
+    if (!path) return;
+    const now  = Date.now();
+    const last = this._tokenReadAt.get(session.id) ?? 0;
+    if (now - last < 2000) return;
+    this._tokenReadAt.set(session.id, now);
+
+    void readContextTokens(path).then((tokens) => {
+      if (tokens === null || tokens === session.contextTokens) return;
+      session.contextTokens = tokens;
+      this._onDidUpdate.fire(session);
+    });
+  }
+
+  /**
+   * Periodic re-evaluation for time-based anomalies (the Silent Stall can
+   * only trip via the clock, never via an incoming event). Fires an update
+   * only when the anomaly state actually changes.
+   */
+  checkStalls(): void {
     for (const session of this._sessions.values()) {
-      if (session.stopped || session.stumbleAlert) continue;
-      const pendingNode = session.nodes.find(
-        (n) => n.status === 'pending' && n.toolName !== '__thinking__'
-      );
-      if (pendingNode && Date.now() - pendingNode.timestamp > TIMEOUT_MS) {
-        session.stumbleAlert = {
-          type: 'timeout',
-          toolName: pendingNode.toolName,
-          nodeId: pendingNode.id,
-          label: pendingNode.label,
-          detectedAt: Date.now(),
-        };
+      if (session.stopped) continue;
+      const next = detectAnomaly(session.events, Date.now());
+      const prev = session.anomaly;
+      const changed =
+        next.isAnomalous !== (prev?.isAnomalous ?? false) ||
+        next.reason !== prev?.reason;
+      if (changed) {
+        session.anomaly = next;
         this._onDidUpdate.fire(session);
       }
     }
@@ -167,6 +210,10 @@ class TraceStore {
   }
 
   clearActive(): void {
+    // Wipe every session so Clear gives a genuinely empty canvas. Leaving old
+    // sessions behind kept the view locked in swimlane mode and leaked stale
+    // (e.g. previous-project) nodes into new runs.
+    this._sessions.clear();
     const id = `session-${Date.now()}`;
     this.startSession(id);
     this._onDidUpdate.fire(this.getActiveSession()!);
@@ -222,6 +269,7 @@ function buildNodes(events: TraceEvent[], stopped: boolean): TraceNode[] {
       if (pending) {
         pending.status = event.isError ? 'error' : 'success';
         pending.detail = event.toolResponse;
+        pending.durationMs = Math.max(0, event.timestamp - pending.timestamp);
         pending.eventIds.push(event.id);
       }
 
@@ -292,10 +340,12 @@ function applyBatchGrouping(nodes: TraceNode[]): TraceNode[] {
         count: runLength,
         eventIds: batchNodes.flatMap((n) => n.eventIds),
         isBatch: true,
+        durationMs: batchNodes.reduce((sum, n) => sum + (n.durationMs ?? 0), 0) || undefined,
         batchItems: batchNodes.map((n) => ({
           label: n.label,
           detail: n.detail,
           status: n.status,
+          durationMs: n.durationMs,
         })),
         detail: batchNodes
           .map((n, idx) => `── [${idx + 1}/${runLength}] ${n.label}\n${n.detail ?? '(no output)'}`)
@@ -311,29 +361,6 @@ function applyBatchGrouping(nodes: TraceNode[]): TraceNode[] {
   }
 
   return result;
-}
-
-// ─── Loop detection ───────────────────────────────────────────────────────────
-
-function detectLoop(nodes: TraceNode[]): StumbleAlert | undefined {
-  const real = nodes.filter((n) => n.toolName !== '__thinking__');
-  if (real.length < 3) return undefined;
-  const last3 = real.slice(-3);
-  if (
-    last3[0].toolName === last3[1].toolName &&
-    last3[1].toolName === last3[2].toolName &&
-    last3[0].label === last3[1].label &&
-    last3[1].label === last3[2].label
-  ) {
-    return {
-      type: 'loop',
-      toolName: last3[2].toolName,
-      nodeId: last3[2].id,
-      label: last3[2].label,
-      detectedAt: Date.now(),
-    };
-  }
-  return undefined;
 }
 
 // ─── Label extraction ─────────────────────────────────────────────────────────
