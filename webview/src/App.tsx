@@ -6,6 +6,9 @@ import SessionOdometer, { AnomalyStateUI } from './components/SessionOdometer';
 import EmptyState from './components/EmptyState';
 import SessionPicker, { SessionSummary } from './components/SessionPicker';
 import Toolbar from './components/Toolbar';
+import { summarizeOutput, copyText } from './payloadParser';
+import { formatTokens, formatCost, computeMetrics } from './metrics';
+import { formatDuration } from './components/TimelineCard';
 import vscode from './vscodeApi';
 
 interface AnomalyRecordUI {
@@ -33,6 +36,48 @@ interface SessionUpdateMessage {
 interface LlmResponseMessage {
   type:   'llm_response';
   answer: string;
+}
+
+/**
+ * Serializes a session as a markdown post-mortem: pasteable into GitHub
+ * issues, PR descriptions, or a fresh agent session as handoff context.
+ */
+function buildSessionReport(s: FullSessionData): string {
+  const real = s.nodes.filter((n) => n.toolName !== '__thinking__');
+  const m    = computeMetrics(s.nodes);
+
+  const lines: string[] = [
+    `# TraceBack session report — ${s.label}`,
+    '',
+    `| total time | actions | errors | anomalies | tokens | est. cost |`,
+    `|---|---|---|---|---|---|`,
+    `| ${formatDuration(m.totalDurationMs) ?? '—'} | ${m.toolCount} | ${m.errorCount} | ${s.anomalyHistory?.length ?? 0} | ${formatTokens(s.contextTokens ?? m.estTokens)} | ${formatCost(((s.contextTokens ?? m.estTokens) / 1_000_000) * 6)} |`,
+    '',
+    '## Timeline',
+    '',
+  ];
+
+  real.forEach((n, i) => {
+    const icon = n.status === 'error' ? '❌' : n.status === 'pending' ? '⏳' : '✅';
+    const dur  = formatDuration(n.durationMs);
+    lines.push(`${i + 1}. ${icon} **${n.toolName}** — ${n.isBatch ? `${n.count} steps` : n.label}${dur ? ` _(${dur})_` : ''}`);
+    const outcome = summarizeOutput(n.detail, n.status === 'error');
+    if (outcome) lines.push(`   - ${outcome}`);
+    if (n.isBatch && n.batchItems) {
+      for (const item of n.batchItems) lines.push(`   - ${item.status === 'error' ? '❌' : '·'} ${item.label}`);
+    }
+  });
+
+  if (s.anomalyHistory && s.anomalyHistory.length > 0) {
+    lines.push('', '## Anomalies', '');
+    for (const rec of s.anomalyHistory) {
+      lines.push(`- ⚠ ${rec.reason} _(${new Date(rec.detectedAt).toLocaleTimeString()})_`);
+    }
+  }
+
+  if (s.aiSummary) lines.push('', '## Summary', '', s.aiSummary);
+
+  return lines.join('\n');
 }
 
 export default function App() {
@@ -170,6 +215,11 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
+  async function handleCopyReport() {
+    if (!display) return;
+    await copyText(buildSessionReport(display));
+  }
+
   function handleClear() {
     vscode.postMessage({ type: 'clear_session' });
     setSessions([]);
@@ -196,6 +246,7 @@ export default function App() {
           nodeCount={realCount}
           onExportPng={handleExportPng}
           onExportJson={handleExportJson}
+          onCopyReport={handleCopyReport}
           onClear={handleClear}
         />
       )}

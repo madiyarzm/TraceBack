@@ -1,12 +1,22 @@
+import { useState } from 'react';
+
 interface Props {
   isLive: boolean;
   nodeCount: number;
   onExportPng: () => void;
   onExportJson: () => void;
+  onCopyReport: () => Promise<void> | void;
   onClear: () => void;
 }
 
-export default function Toolbar({ isLive, nodeCount, onExportPng, onExportJson, onClear }: Props) {
+export default function Toolbar({ isLive, nodeCount, onExportPng, onExportJson, onCopyReport, onClear }: Props) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    await onCopyReport();
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1200);
+  }
   return (
     <div style={{
       display: 'flex',
@@ -62,6 +72,7 @@ export default function Toolbar({ isLive, nodeCount, onExportPng, onExportJson, 
       <div style={{ display: 'flex', gap: 2 }}>
         <BarButton onClick={onExportPng}>PNG</BarButton>
         <BarButton onClick={onExportJson}>JSON</BarButton>
+        <BarButton onClick={handleCopy}>{copied ? '✓' : 'MD'}</BarButton>
         <BarButton onClick={onClear} danger>CLR</BarButton>
       </div>
     </div>

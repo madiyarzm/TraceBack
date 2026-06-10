@@ -1,5 +1,6 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import DiffViewer from './DiffViewer';
+import { parseToolPayload, formatBytes, summarizeOutput, copyText } from '../payloadParser';
 
 export type NodeStatus = 'pending' | 'success' | 'error' | 'thinking';
 
@@ -52,22 +53,6 @@ export function formatDuration(ms?: number): string | null {
   const s = Math.round((ms % 60_000) / 1000);
   return `${m}m ${s}s`;
 }
-
-const MONO_BLOCK: React.CSSProperties = {
-  background:   '#0d1117',
-  border:       '1px solid var(--tb-border)',
-  borderRadius: 4,
-  padding:      '8px 10px',
-  fontFamily:   'var(--tb-mono-font, ui-monospace, monospace)',
-  fontSize:     10.5,
-  lineHeight:   1.5,
-  color:        '#c9d1d9',
-  whiteSpace:   'pre-wrap',
-  wordBreak:    'break-word',
-  overflowY:    'auto',
-  maxHeight:    220,
-  margin:       0,
-};
 
 interface Props {
   node:     TimelineNode;
@@ -247,20 +232,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
               </div>
             )}
 
-            {renderArguments(node)}
-
-            {node.detail && (
-              <div>
-                <SectionLabel>output</SectionLabel>
-                <pre style={MONO_BLOCK}>{node.detail}</pre>
-              </div>
-            )}
-
-            {!node.detail && !node.toolInput && !node.isBatch && (
-              <span style={{ fontSize: 10.5, color: 'var(--tb-text-dim)' }}>
-                no recorded input/output for this step
-              </span>
-            )}
+            <CuratedBody node={node} />
           </div>
         )}
       </div>
@@ -269,59 +241,270 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
 }
 
 /**
- * File-modification tools get a visual diff instead of raw JSON:
- *  - Edit:      old_string → new_string (real before/after diff)
- *  - Write:     '' → content            (all-additions diff)
- *  - MultiEdit: one diff section per entry in edits[]
- * Everything else falls back to pretty-printed JSON arguments.
+ * Curated expanded view: a deterministic parser (payloadParser.ts) classifies
+ * the call, and each category gets a purpose-built panel instead of a raw
+ * JSON/log dump. The unedited payload stays one click away in the raw panel.
  */
-function renderArguments(node: TimelineNode) {
-  const input = node.toolInput;
-  if (!input || Object.keys(input).length === 0) return null;
+function CuratedBody({ node }: { node: TimelineNode }) {
+  const [showRaw, setShowRaw] = useState(false);
+  const parsed  = parseToolPayload(node.toolName, node.toolInput, node.detail);
+  const isError = node.status === 'error';
+  const hasRaw  = !!node.detail || !!(node.toolInput && Object.keys(node.toolInput).length);
 
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {/* ── Bash: command trace + exit pill, logs masked ── */}
+      {parsed.kind === 'bash' && parsed.command && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: '#0d1117',
+          border: '1px solid var(--tb-border)',
+          borderRadius: 4, padding: '6px 10px',
+        }}>
+          <span style={{
+            fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+            fontSize: 10.5, color: '#c9d1d9',
+            flex: 1, minWidth: 0,
+            wordBreak: 'break-all',
+          }}>
+            <span style={{ color: 'var(--tb-text-muted)', userSelect: 'none' }}>$ </span>
+            {parsed.command}
+          </span>
+          <CopyBtn getText={() => parsed.command ?? ''} title="copy command" />
+          <Pill color={isError ? '#f85149' : '#3fb950'}>
+            {isError ? 'failed' : 'exit 0'}
+          </Pill>
+        </div>
+      )}
+
+      {/* ── Outcome: deterministic one-line "what happened" ── */}
+      {(() => {
+        const outcome = summarizeOutput(node.detail, isError);
+        if (!outcome) return null;
+        return (
+          <div style={{
+            display: 'flex', alignItems: 'baseline', gap: 6,
+            fontSize: 10.5, lineHeight: 1.45,
+            color: isError ? '#ffa198' : 'var(--tb-text)',
+            wordBreak: 'break-word',
+          }}>
+            <span style={{ color: 'var(--tb-text-dim)', flexShrink: 0, userSelect: 'none' }}>→</span>
+            <span>{outcome}</span>
+          </div>
+        );
+      })()}
+
+      {/* ── File read: path + size metrics, contents masked ── */}
+      {parsed.kind === 'file-read' && (
+        <FileRow icon="📄" path={parsed.filePath} verb="read"
+                 lines={parsed.lines} bytes={parsed.bytes} />
+      )}
+
+      {/* ── File write/edit: metrics + the diff (the curated view for mods) ── */}
+      {parsed.kind === 'file-write' && (
+        <>
+          <FileRow icon="✎" path={parsed.filePath} verb="written"
+                   lines={parsed.lines} bytes={parsed.bytes} />
+          {renderDiff(node)}
+        </>
+      )}
+
+      {/* ── Web: query / domain chips ── */}
+      {parsed.kind === 'web' && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+          {parsed.query  && <Chip>⌕ {parsed.query}</Chip>}
+          {parsed.domain && <Chip>↗ {parsed.domain}</Chip>}
+          {!parsed.query && !parsed.domain && parsed.url && <Chip>↗ {parsed.url}</Chip>}
+        </div>
+      )}
+
+      {parsed.kind === 'generic' && !hasRaw && (
+        <span style={{ fontSize: 10.5, color: 'var(--tb-text-dim)' }}>
+          no recorded input/output for this step
+        </span>
+      )}
+
+      {/* ── Raw panel fallback ── */}
+      {hasRaw && (
+        <div>
+          <div style={{ display: 'flex', gap: 5 }}>
+            <button
+              onClick={() => setShowRaw((v) => !v)}
+              style={{
+                background: 'none',
+                border: '1px solid var(--tb-border)',
+                borderRadius: 3,
+                color: 'var(--tb-text-muted)',
+                fontSize: 9.5,
+                fontFamily: 'var(--tb-ui-font)',
+                padding: '2px 8px',
+                cursor: 'pointer',
+              }}
+            >
+              📄 {showRaw ? 'hide' : 'view'} raw log output
+            </button>
+            <CopyBtn getText={() => rawText(node)} title="copy raw input/output" label="copy" />
+          </div>
+
+          {showRaw && (
+            <pre style={{
+              margin: '6px 0 0',
+              background: '#0a0e14',
+              border: '1px solid #21262d',
+              borderRadius: 4,
+              padding: 8,
+              fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+              fontSize: 10,
+              lineHeight: 1.5,
+              color: '#7ee787',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              maxHeight: 144,
+              overflowY: 'auto',
+            }}>
+              {rawText(node)}
+            </pre>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function rawText(node: TimelineNode): string {
+  let out = '';
+  if (node.toolInput && Object.keys(node.toolInput).length > 0) {
+    out += `── arguments ──\n${JSON.stringify(node.toolInput, null, 2)}\n\n`;
+  }
+  if (node.detail) out += `── output ──\n${node.detail}`;
+  return out;
+}
+
+/** Small copy button with transient ✓ feedback. */
+function CopyBtn({ getText, title, label }: {
+  getText: () => string; title: string; label?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      title={title}
+      onClick={async (e) => {
+        e.stopPropagation();
+        if (await copyText(getText())) {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1200);
+        }
+      }}
+      style={{
+        background: 'none',
+        border: '1px solid var(--tb-border)',
+        borderRadius: 3,
+        color: copied ? '#3fb950' : 'var(--tb-text-muted)',
+        fontSize: 9.5,
+        fontFamily: 'var(--tb-ui-font)',
+        padding: '2px 7px',
+        cursor: 'pointer',
+        flexShrink: 0,
+      }}
+    >
+      {copied ? '✓' : (label ?? '⧉')}
+    </button>
+  );
+}
+
+function renderDiff(node: TimelineNode) {
+  const input = node.toolInput;
+  if (!input) return null;
   const filePath = (input.file_path ?? input.path) as string | undefined;
 
   if (node.toolName === 'Edit' &&
       typeof input.old_string === 'string' && typeof input.new_string === 'string') {
-    return (
-      <div>
-        <SectionLabel>changes</SectionLabel>
-        <DiffViewer oldText={input.old_string} newText={input.new_string} filePath={filePath} />
-      </div>
-    );
+    return <DiffViewer oldText={input.old_string} newText={input.new_string} filePath={filePath} />;
   }
-
-  if (node.toolName === 'Write' && typeof input.content === 'string') {
-    return (
-      <div>
-        <SectionLabel>file written</SectionLabel>
-        <DiffViewer oldText="" newText={input.content} filePath={filePath} />
-      </div>
-    );
+  if ((node.toolName === 'Write' || node.toolName === 'FileWrite' || node.toolName === 'NotebookEdit') &&
+      typeof input.content === 'string') {
+    return <DiffViewer oldText="" newText={input.content} filePath={filePath} />;
   }
-
   if (node.toolName === 'MultiEdit' && Array.isArray(input.edits)) {
     const edits = input.edits as { old_string?: string; new_string?: string }[];
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <SectionLabel>changes ({edits.length} edits)</SectionLabel>
         {edits.map((e, i) => (
-          <DiffViewer
-            key={i}
-            oldText={e.old_string ?? ''}
-            newText={e.new_string ?? ''}
-            filePath={i === 0 ? filePath : undefined}
-          />
+          <DiffViewer key={i} oldText={e.old_string ?? ''} newText={e.new_string ?? ''}
+                      filePath={i === 0 ? filePath : undefined} />
         ))}
       </div>
     );
   }
+  return null;
+}
+
+function FileRow({ icon, path, verb, lines, bytes }: {
+  icon: string; path?: string; verb: string; lines?: number; bytes?: number;
+}) {
+  const metrics = [
+    lines !== undefined ? `${lines} lines` : null,
+    formatBytes(bytes),
+  ].filter(Boolean).join(' · ');
 
   return (
-    <div>
-      <SectionLabel>arguments</SectionLabel>
-      <pre style={MONO_BLOCK}>{JSON.stringify(input, null, 2)}</pre>
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 7,
+      background: 'var(--tb-surface-2)',
+      border: '1px solid var(--tb-border)',
+      borderRadius: 4, padding: '5px 10px',
+    }}>
+      <span style={{ fontSize: 11, flexShrink: 0 }}>{icon}</span>
+      <span style={{
+        fontSize: 10.5,
+        fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+        color: 'var(--tb-text)',
+        flex: 1, minWidth: 0,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        direction: 'rtl', textAlign: 'left',
+      }}>
+        {path ?? 'unknown file'}
+      </span>
+      {metrics && (
+        <span style={{ fontSize: 9.5, color: 'var(--tb-text-muted)', flexShrink: 0 }}>
+          {metrics} {verb}
+        </span>
+      )}
     </div>
+  );
+}
+
+function Pill({ color, children }: { color: string; children: React.ReactNode }) {
+  return (
+    <span style={{
+      flexShrink: 0,
+      fontSize: 9, fontWeight: 600,
+      color,
+      background: `${color}18`,
+      border: `1px solid ${color}40`,
+      borderRadius: 3,
+      padding: '1px 6px',
+      lineHeight: '14px',
+    }}>
+      {children}
+    </span>
+  );
+}
+
+function Chip({ children }: { children: React.ReactNode }) {
+  return (
+    <span style={{
+      fontSize: 10,
+      color: 'var(--tb-text)',
+      background: 'var(--tb-surface-2)',
+      border: '1px solid var(--tb-border)',
+      borderRadius: 10,
+      padding: '2px 9px',
+      maxWidth: '100%',
+      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    }}>
+      {children}
+    </span>
   );
 }
 
