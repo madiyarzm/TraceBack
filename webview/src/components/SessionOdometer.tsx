@@ -15,6 +15,10 @@ interface Props {
   anomaly?:    AnomalyStateUI;
   /** Cumulative detections this session (anomalyHistory.length) — never resets. */
   anomalyCount?: number;
+  /** Breakpoint state: agent frozen at its next tool call. */
+  paused?:        boolean;
+  onPauseToggle?: () => void;
+  onRedirect?:    (message: string) => void;
   /** Real token usage from the transcript; falls back to the estimate. */
   realTokens?: number;
   aiSummary?:  string;
@@ -24,10 +28,19 @@ interface Props {
 }
 
 export default function SessionOdometer({
-  nodes, isLive, anomaly, anomalyCount = 0, realTokens, aiSummary, chatAnswer, chatLoading, onChat,
+  nodes, isLive, anomaly, anomalyCount = 0, paused = false,
+  onPauseToggle, onRedirect, realTokens, aiSummary, chatAnswer, chatLoading, onChat,
 }: Props) {
   const [question, setQuestion] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
+  const [redirect, setRedirect] = useState('');
+
+  function sendRedirect() {
+    const msg = redirect.trim();
+    if (!msg || !onRedirect) return;
+    onRedirect(msg);
+    setRedirect('');
+  }
 
   const m = useMemo(() => computeMetrics(nodes), [nodes]);
 
@@ -88,6 +101,23 @@ export default function SessionOdometer({
           dim
         />
         <div style={{ flex: 1 }} />
+        {isLive && onPauseToggle && (
+          <button
+            onClick={onPauseToggle}
+            title={paused ? 'Resume — release the held tool call' : 'Pause — freeze the agent at its next tool call'}
+            style={{
+              background: paused ? 'rgba(210,153,34,0.15)' : 'none',
+              border: `1px solid ${paused ? 'rgba(210,153,34,0.6)' : 'var(--tb-border)'}`,
+              borderRadius: 3,
+              color: paused ? '#d29922' : 'var(--tb-text-muted)',
+              fontSize: 9.5, fontWeight: 600,
+              padding: '0 8px', cursor: 'pointer',
+              alignSelf: 'center', lineHeight: '18px',
+            }}
+          >
+            {paused ? '▶ resume' : '⏸ pause'}
+          </button>
+        )}
         <button
           onClick={() => setChatOpen((v) => !v)}
           style={{
@@ -102,6 +132,56 @@ export default function SessionOdometer({
           ask AI {chatOpen ? '▴' : '▾'}
         </button>
       </div>
+
+      {/* ── Breakpoint banner + human-in-the-loop redirect ── */}
+      {paused && (
+        <div style={{
+          padding: '6px 12px 9px',
+          borderBottom: '1px solid rgba(210,153,34,0.35)',
+          background: 'rgba(70,52,12,0.45)',
+          display: 'flex', flexDirection: 'column', gap: 6,
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 7,
+            color: '#d29922', fontSize: 10.5, fontWeight: 600,
+          }}>
+            <span style={{ animation: 'pendingPulse 1.4s ease-in-out infinite' }}>⏸</span>
+            <span>BREAKPOINT — agent freezes at its next tool call until you resume or redirect</span>
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              value={redirect}
+              onChange={(e) => setRedirect(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && sendRedirect()}
+              placeholder="💬 Redirect agent… e.g. 'stop installing that package, use the native lib'"
+              style={{
+                flex: 1,
+                background: 'var(--tb-surface)',
+                border: '1px solid rgba(210,153,34,0.4)',
+                borderRadius: 3,
+                color: 'var(--tb-text)',
+                fontSize: 11, padding: '4px 8px',
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={sendRedirect}
+              disabled={!redirect.trim()}
+              style={{
+                background: 'rgba(210,153,34,0.15)',
+                border: '1px solid rgba(210,153,34,0.5)',
+                borderRadius: 3,
+                color: '#d29922',
+                fontSize: 10.5, fontWeight: 600,
+                padding: '0 10px',
+                cursor: redirect.trim() ? 'pointer' : 'not-allowed',
+              }}
+            >
+              intercept & send
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── AI narrative line ── */}
       {aiSummary && (

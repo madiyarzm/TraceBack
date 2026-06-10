@@ -25,6 +25,7 @@ interface FullSessionData extends SessionSummary {
   aiSummary?:      string;
   contextTokens?:  number;
   cwd?:            string;
+  paused?:         boolean;
 }
 
 interface SessionUpdateMessage {
@@ -215,6 +216,19 @@ export default function App() {
     URL.revokeObjectURL(url);
   }
 
+  function handlePauseToggle() {
+    if (!display) return;
+    vscode.postMessage({
+      type: display.paused ? 'resume_session' : 'pause_session',
+      sessionId: display.id,
+    });
+  }
+
+  function handleRedirect(message: string) {
+    if (!display) return;
+    vscode.postMessage({ type: 'redirect_session', sessionId: display.id, message });
+  }
+
   async function handleCopyReport() {
     if (!display) return;
     await copyText(buildSessionReport(display));
@@ -265,6 +279,9 @@ export default function App() {
               isLive={isLive}
               anomaly={anomaly}
               anomalyCount={history.length}
+              paused={display?.paused ?? false}
+              onPauseToggle={handlePauseToggle}
+              onRedirect={handleRedirect}
               realTokens={display?.contextTokens}
               aiSummary={display?.aiSummary}
               chatAnswer={chatAnswer}

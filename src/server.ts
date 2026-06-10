@@ -31,7 +31,20 @@ export function startServer(outputChannel: vscode.OutputChannel, port: number): 
       req.on('end', () => {
         try {
           const payload = JSON.parse(body);
-          handleHookPayload(payload);
+          const event = handleHookPayload(payload);
+
+          // Breakpoint gate: while a session is paused, PreToolUse responses
+          // are held open — Claude Code waits on the curl, freezing the agent
+          // at the boundary of its next tool call. resume/redirect resolves it.
+          if (
+            event &&
+            event.kind === 'pre_tool_use' &&
+            traceStore.getSession(event.sessionId)?.paused
+          ) {
+            parkCall(event, res);
+            return;
+          }
+
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ ok: true }));
         } catch (err) {
@@ -71,6 +84,10 @@ export function startServer(outputChannel: vscode.OutputChannel, port: number): 
 }
 
 export function stopServer(): void {
+  // Release any frozen agents before going down.
+  for (const sessionId of Array.from(_parked.keys())) {
+    flushSession(sessionId, 'allow');
+  }
   if (!_server) return;
   _server.close(() => {
     _outputChannel.appendLine('[TraceBack] Server stopped.');
@@ -78,20 +95,93 @@ export function stopServer(): void {
   _server = null;
 }
 
+// ─── Breakpoint gate ──────────────────────────────────────────────────────────
+// Held PreToolUse responses, keyed by session. While parked, the agent's curl
+// is blocked and the agent is frozen at its next tool call.
+
+interface ParkedCall {
+  event: TraceEvent;
+  res:   http.ServerResponse;
+}
+
+const _parked = new Map<string, ParkedCall[]>();
+
+function parkCall(event: TraceEvent, res: http.ServerResponse): void {
+  const list = _parked.get(event.sessionId) ?? [];
+  list.push({ event, res });
+  _parked.set(event.sessionId, list);
+  _outputChannel.appendLine(
+    `[TraceBack] ⏸ holding ${event.toolName ?? 'tool'} call (session ${event.sessionId.slice(0, 8)})`
+  );
+}
+
+/**
+ * Resolve all held calls for a session.
+ *  - 'allow': respond neutrally — the tool call proceeds as normal.
+ *  - 'deny':  respond with a PreToolUse deny decision; `reason` is fed back
+ *             into Claude's context verbatim (the human-in-the-loop redirect).
+ */
+export function flushSession(sessionId: string, decision: 'allow' | 'deny', reason?: string): number {
+  const parked = _parked.get(sessionId) ?? [];
+  _parked.delete(sessionId);
+
+  for (const { event, res } of parked) {
+    try {
+      if (decision === 'allow') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+      } else {
+        const why = reason ?? 'Intercepted by user via TraceBack.';
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        // Both schemas for compatibility: legacy top-level decision and the
+        // current hookSpecificOutput.permissionDecision form.
+        res.end(JSON.stringify({
+          decision: 'block',
+          reason: why,
+          hookSpecificOutput: {
+            hookEventName:            'PreToolUse',
+            permissionDecision:       'deny',
+            permissionDecisionReason: why,
+          },
+        }));
+        // Synthetic completion so the timeline shows the interception instead
+        // of an eternally-pending node (a denied call emits no PostToolUse).
+        traceStore.addEvent({
+          id:           `evt-intercept-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          sessionId:    event.sessionId,
+          kind:         'post_tool_use',
+          toolName:     event.toolName,
+          toolResponse: `⛔ Intercepted by user: ${why}`,
+          isError:      true,
+          timestamp:    Date.now(),
+        });
+      }
+    } catch (err) {
+      _outputChannel.appendLine(`[TraceBack] Failed to flush parked call: ${err}`);
+    }
+  }
+  if (parked.length > 0) {
+    _outputChannel.appendLine(
+      `[TraceBack] ▶ released ${parked.length} held call(s) (${decision}) for ${sessionId.slice(0, 8)}`
+    );
+  }
+  return parked.length;
+}
+
 // Maps the raw Claude Code hook payload into our internal TraceEvent shape.
 // Claude Code sends different shapes for PreToolUse vs PostToolUse vs Stop.
-function handleHookPayload(payload: Record<string, unknown>): void {
+function handleHookPayload(payload: Record<string, unknown>): TraceEvent | null {
   const hookType = payload.hook_event_name as string | undefined;
 
   if (!hookType) {
     _outputChannel.appendLine('[TraceBack] Received payload with no hook_event_name, skipping.');
-    return;
+    return null;
   }
 
   _outputChannel.appendLine(`[TraceBack] Hook received: ${hookType}`);
 
   const kind = hookTypeToKind(hookType);
-  if (!kind) return;
+  if (!kind) return null;
 
   const event: TraceEvent = {
     id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -110,6 +200,7 @@ function handleHookPayload(payload: Record<string, unknown>): void {
   };
 
   traceStore.addEvent(event);
+  return event;
 }
 
 /**

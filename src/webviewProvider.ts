@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { TraceSession, traceStore } from './traceStore';
+import { flushSession } from './server';
 
 export interface LLMQueryEvent {
   question:    string;
@@ -63,6 +64,7 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
         aiSummary:      s.aiSummary,
         contextTokens: s.contextTokens,
         cwd:           s.cwd,
+        paused:        s.paused,
         })),
     };
     this._view?.webview.postMessage(payload);
@@ -127,6 +129,26 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
         break;
       case 'clear_session':
         traceStore.clearActive();
+        break;
+      case 'pause_session':
+        if (typeof message.sessionId === 'string') {
+          traceStore.setPaused(message.sessionId, true);
+        }
+        break;
+      case 'resume_session':
+        if (typeof message.sessionId === 'string') {
+          traceStore.setPaused(message.sessionId, false);
+          flushSession(message.sessionId, 'allow');
+        }
+        break;
+      case 'redirect_session':
+        if (typeof message.sessionId === 'string') {
+          const reason = typeof message.message === 'string' && message.message.trim()
+            ? message.message.trim()
+            : undefined;
+          flushSession(message.sessionId, 'deny', reason);
+          traceStore.setPaused(message.sessionId, false);
+        }
         break;
       case 'llm_query':
         this._onLlmQuery.fire({

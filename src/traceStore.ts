@@ -76,6 +76,8 @@ export interface TraceSession {
   contextTokens?: number;
   /** Working directory of the agent; its tail segment becomes the label. */
   cwd?: string;
+  /** Breakpoint: when true, the server parks the next PreToolUse call. */
+  paused?: boolean;
 }
 
 class TraceStore {
@@ -196,7 +198,8 @@ class TraceStore {
    */
   checkStalls(): void {
     for (const session of this._sessions.values()) {
-      if (session.stopped) continue;
+      // A paused session is intentionally frozen — not a stall.
+      if (session.stopped || session.paused) continue;
       const next = detectAnomaly(session.events, Date.now());
       const prev = session.anomaly;
       const changed =
@@ -231,6 +234,13 @@ class TraceStore {
       session.anomalyHistory.push(record);
       this._onAnomaly.fire({ session, record });
     }
+  }
+
+  setPaused(sessionId: string, paused: boolean): void {
+    const session = this._sessions.get(sessionId);
+    if (!session) return;
+    session.paused = paused;
+    this._onDidUpdate.fire(session);
   }
 
   setAiSummary(sessionId: string, summary: string): void {
