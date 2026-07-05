@@ -1,29 +1,24 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import Timeline from './components/Timeline';
-import SessionOdometer from './components/SessionOdometer';
 import EmptyState from './components/EmptyState';
 import SessionPicker from './components/SessionPicker';
 import FileChangesPanel from './components/FileChangesPanel';
-import ObjectiveHeader from './components/ObjectiveHeader';
-import SessionMap from './components/SessionMap';
-import ZoomControl, { ZoomLevel } from './components/ZoomControl';
+import PromptChapterView from './components/PromptChapterView';
 import { DotsIcon, PanelIcon } from './components/Icons';
 import { agentIdentity } from './codename';
+import { computeChapters } from './chapters';
 import { useSessionFeed } from './useSessionFeed';
 
 /**
  * Compact sidebar: one 30px header row (status + label + actions), session
- * pills only when several agents run, then the timeline. Everything heavier
- * (full stats, history, file details) lives in the full panel.
+ * pills only when several agents run, then the live prompt-chapter view — the
+ * same single view as the full panel, no timeline/map/zoom toggle.
  */
 export default function SidebarApp() {
-  const [zoom, setZoom] = useState<ZoomLevel>('steps');
   const feed = useSessionFeed();
   const {
     sessions, archived, display, pinnedId,
     expandedId, setExpandedId,
-    chatAnswer, chatLoading,
     timelineRef, scrollRef, handleScroll,
   } = feed;
 
@@ -32,6 +27,10 @@ export default function SidebarApp() {
   const isLive     = display ? !display.stopped && !archived : false;
   const anomaly    = archived ? undefined : display?.anomaly;
   const realCount  = traceNodes.filter((n) => !n.toolName.startsWith('__')).length;
+
+  // The live chapter = the current (last) prompt's slice.
+  const chapters = useMemo(() => computeChapters(traceNodes), [traceNodes]);
+  const liveChapter = chapters[chapters.length - 1] ?? null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100vw', height: '100vh' }}>
@@ -74,7 +73,6 @@ export default function SidebarApp() {
           </span>
         )}
         <div style={{ flex: 1 }} />
-        {hasData && <ZoomControl compact zoom={zoom} onChange={setZoom} />}
         {hasData && <OverflowMenu feed={feed} />}
         <HeaderButton title="Open full view" onClick={feed.openFullPanel}><PanelIcon /></HeaderButton>
       </div>
@@ -97,54 +95,22 @@ export default function SidebarApp() {
         onScroll={handleScroll}
         style={{ position: 'relative', flex: 1, minHeight: 0, overflowY: 'auto' }}
       >
-        {!hasData ? (
+        {!hasData || !liveChapter ? (
           <EmptyState />
         ) : (
           <div ref={timelineRef}>
-            <SessionOdometer
-              slim
-              nodes={traceNodes}
-              awaitingInput={archived ? undefined : display?.awaitingInput}
+            <PromptChapterView
+              chapter={liveChapter}
               isLive={isLive}
-              anomaly={anomaly}
-              anomalyCount={display?.anomalyHistory?.length ?? 0}
-              paused={display?.paused ?? false}
-              onPauseToggle={feed.pauseToggle}
-              onRedirect={feed.redirect}
+              isLast
               realTokens={display?.contextTokens}
-              aiSummary={display?.aiSummary}
-              chatAnswer={chatAnswer}
-              chatLoading={chatLoading}
-              onChat={feed.chat}
+              expandedId={expandedId}
+              onToggle={(id) => setExpandedId(expandedId === id ? null : id)}
+              anomaly={anomaly}
+              paused={display?.paused ?? false}
+              onPauseToggle={archived ? undefined : feed.pauseToggle}
+              onRedirect={archived ? undefined : feed.redirect}
             />
-
-            {zoom !== 'map' && (
-              <ObjectiveHeader
-                slim
-                plan={display?.plan}
-                nodes={traceNodes}
-                isLive={isLive}
-              />
-            )}
-
-            {zoom === 'map' ? (
-              <SessionMap
-                nodes={traceNodes}
-                plan={display?.plan}
-                history={display?.anomalyHistory}
-                isLive={isLive}
-              />
-            ) : (
-              <Timeline
-                nodes={traceNodes}
-                anomaly={anomaly}
-                history={display?.anomalyHistory}
-                expandedId={expandedId}
-                expandAll={zoom === 'detail'}
-                isLive={isLive}
-                onToggle={(id) => setExpandedId(expandedId === id ? null : id)}
-              />
-            )}
 
             <FileChangesPanel nodes={traceNodes} />
           </div>

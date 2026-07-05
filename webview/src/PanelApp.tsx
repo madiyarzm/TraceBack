@@ -1,15 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import Timeline from './components/Timeline';
-import SessionOdometer from './components/SessionOdometer';
 import EmptyState from './components/EmptyState';
 import FileChangesPanel from './components/FileChangesPanel';
-import ObjectiveHeader from './components/ObjectiveHeader';
-import SessionMap from './components/SessionMap';
 import PromptList from './components/PromptList';
 import PromptChapterView from './components/PromptChapterView';
 import RightPanel from './components/RightPanel';
-import ZoomControl, { ZoomLevel } from './components/ZoomControl';
 import { formatDuration } from './components/TimelineCard';
 import { AlertIcon, CheckIcon, FileIcon } from './components/Icons';
 import { agentIdentity } from './codename';
@@ -17,14 +12,12 @@ import { anomaliesFor, computeChapters } from './chapters';
 import { useSessionFeed, FullSessionData, ArchivedMeta } from './useSessionFeed';
 
 /**
- * Full editor panel, structured around prompt chapters: prompts on the left,
- * the focused prompt's tasks + actions in the middle, and the
- * Anomalies/Files/Guards tabs on the right. The classic Map/Steps/Detail
- * zooms stay one click away.
+ * Full editor panel — a single prompt-chapter view: prompts on the left, the
+ * focused prompt's tasks + action cards in the middle, and the
+ * Anomalies/Files/Guards tabs on the right. There is no other view.
  */
 export default function PanelApp() {
-  const [zoom, setZoom] = useState<ZoomLevel>('chapters');
-  // Wide layout: enough room for the timeline plus the right tab panel.
+  // Wide layout: enough room for the chapter view plus the right tab panel.
   const [wide, setWide] = useState(window.innerWidth >= 1150);
   useEffect(() => {
     const onResize = () => setWide(window.innerWidth >= 1150);
@@ -36,7 +29,6 @@ export default function PanelApp() {
   const {
     sessions, history, archived, display,
     expandedId, setExpandedId,
-    chatAnswer, chatLoading,
     timelineRef, scrollRef, handleScroll,
   } = feed;
 
@@ -136,10 +128,7 @@ export default function PanelApp() {
                 selectedIndex={selectedIndex}
                 isLive={isLive}
                 anomalyCounts={anomalyCounts}
-                onSelect={(i) => {
-                  setPickedChapter(i === chapters.length ? null : i);
-                  if (zoom !== 'chapters') setZoom('chapters');
-                }}
+                onSelect={(i) => setPickedChapter(i === chapters.length ? null : i)}
               />
             </>
           )}
@@ -206,7 +195,6 @@ export default function PanelApp() {
             </span>
           )}
           <div style={{ flex: 1 }} />
-          {hasData && <ZoomControl withChapters zoom={zoom} onChange={setZoom} />}
           {hasData && !archived && (
             <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
               <ClearPanelButton onClear={feed.clear} />
@@ -230,7 +218,7 @@ export default function PanelApp() {
             }}>
               {/* ── Main column: fills all available width ── */}
               <div style={{ flex: 1, minWidth: 0 }}>
-                {zoom === 'chapters' && selectedChapter ? (
+                {selectedChapter && (
                   <PromptChapterView
                     chapter={selectedChapter}
                     isLive={isLive && selectedIndex === chapters.length}
@@ -243,54 +231,6 @@ export default function PanelApp() {
                     onPauseToggle={archived ? undefined : feed.pauseToggle}
                     onRedirect={archived ? undefined : feed.redirect}
                   />
-                ) : (
-                  <SessionOdometer
-                    nodes={traceNodes}
-                    awaitingInput={archived ? undefined : display?.awaitingInput}
-                    isLive={isLive}
-                    anomaly={anomaly}
-                    anomalyCount={display?.anomalyHistory?.length ?? 0}
-                    paused={display?.paused ?? false}
-                    onPauseToggle={archived ? undefined : feed.pauseToggle}
-                    onRedirect={archived ? undefined : feed.redirect}
-                    realTokens={display?.contextTokens}
-                    aiSummary={display?.aiSummary}
-                    chatAnswer={chatAnswer}
-                    chatLoading={chatLoading}
-                    onChat={feed.chat}
-                  />
-                )}
-
-                {zoom !== 'chapters' && (
-                  <>
-                    {zoom !== 'map' && (
-                      <ObjectiveHeader
-                        plan={display?.plan}
-                        nodes={traceNodes}
-                        isLive={isLive}
-                      />
-                    )}
-
-                    {zoom === 'map' ? (
-                      <SessionMap
-                        grid={wide}
-                        nodes={traceNodes}
-                        plan={display?.plan}
-                        history={display?.anomalyHistory}
-                        isLive={isLive}
-                      />
-                    ) : (
-                      <Timeline
-                        nodes={traceNodes}
-                        anomaly={anomaly}
-                        history={display?.anomalyHistory}
-                        expandedId={expandedId}
-                        expandAll={zoom === 'detail'}
-                        isLive={isLive}
-                        onToggle={(id) => setExpandedId(expandedId === id ? null : id)}
-                      />
-                    )}
-                  </>
                 )}
 
                 {!wide && <FileChangesPanel nodes={traceNodes} defaultOpen clickable={!archived} />}
