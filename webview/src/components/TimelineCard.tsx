@@ -59,8 +59,8 @@ const TOOL_ICON: Record<string, string> = {
 /** Tool-type accent color for the pill (independent of run status). */
 const TOOL_COLOR: Record<string, string> = {
   Read: '#58a6ff', Grep: '#58a6ff', Glob: '#58a6ff', LS: '#58a6ff', NotebookRead: '#58a6ff',
-  Bash: '#3fb950',
-  Edit: '#d29922', Write: '#d29922', MultiEdit: '#d29922', NotebookEdit: '#d29922', FileWrite: '#d29922',
+  Bash: '#d29922',
+  Edit: '#3fb950', Write: '#3fb950', MultiEdit: '#3fb950', NotebookEdit: '#3fb950', FileWrite: '#3fb950',
   WebSearch: '#a371f7', WebFetch: '#a371f7',
   Agent: '#a371f7',
 };

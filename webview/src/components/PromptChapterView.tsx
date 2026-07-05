@@ -338,15 +338,21 @@ function TaskBlock({ group, isLive, expandedId, onToggle }: {
         </span>
       </div>
 
-      {/* Done tasks collapse to a one-line file summary */}
-      {!open && group.files.length > 0 && (
+      {/* Done tasks collapse to a one-line "TOOL path · TOOL path" summary */}
+      {!open && collapsedSummary(group).length > 0 && (
         <div style={{
           padding: '0 15px 11px 39px',
-          fontSize: 11, color: 'var(--tb-text-dim)',
+          fontSize: 11,
           fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>
-          {group.files.join(' · ')}
+          {collapsedSummary(group).map((e, i) => (
+            <span key={i}>
+              {i > 0 && <span style={{ color: 'var(--tb-text-dim)' }}> · </span>}
+              <span style={{ color: 'var(--tb-text-muted)', fontWeight: 600 }}>{e.tool}</span>
+              <span style={{ color: 'var(--tb-text-dim)' }}> {e.path}</span>
+            </span>
+          ))}
         </div>
       )}
 
@@ -453,6 +459,27 @@ function ControlButton({ onClick, active, activeColor, icon, label }: {
       <span>{label}</span>
     </button>
   );
+}
+
+/** "TOOL path" entries for a collapsed done task — one per file-bearing action,
+ *  first-seen order, deduped. Bash and other fileless calls are omitted. */
+function collapsedSummary(group: ChapterTaskGroup): { tool: string; path: string }[] {
+  const out: { tool: string; path: string }[] = [];
+  const seen = new Set<string>();
+  for (const node of group.nodes) {
+    const items = node.isBatch && node.batchItems ? node.batchItems : [node];
+    for (const item of items) {
+      const raw = (item.toolInput?.file_path ?? item.toolInput?.path ??
+                   item.toolInput?.notebook_path) as string | undefined;
+      if (!raw) continue;
+      const path = raw.split('/').filter(Boolean).slice(-2).join('/');
+      const key  = `${node.toolName}:${path}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ tool: node.toolName.toUpperCase(), path });
+    }
+  }
+  return out;
 }
 
 function HeaderStat({ value, label, color }: { value: string; label: string; color?: string }) {

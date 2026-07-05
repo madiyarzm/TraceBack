@@ -70,7 +70,7 @@ function PromptRow({ chapter, selected, badge, onClick }: {
         padding: '11px 13px',
         borderRadius: 9,
         border: `1px solid ${selected ? 'var(--tb-border-2)' : 'transparent'}`,
-        background: selected ? 'var(--tb-surface-2)' : hovered ? 'rgba(22,27,34,0.55)' : 'transparent',
+        background: selected ? 'transparent' : hovered ? 'rgba(22,27,34,0.4)' : 'transparent',
         cursor: 'pointer',
         transition: 'background 0.1s, border-color 0.1s',
         fontFamily: 'var(--tb-ui-font)',
@@ -89,7 +89,7 @@ function PromptRow({ chapter, selected, badge, onClick }: {
       </div>
 
       <div style={{
-        fontSize: 13.5, fontWeight: 600, lineHeight: 1.35, marginTop: 5,
+        fontSize: 13, fontWeight: 400, lineHeight: 1.4, marginTop: 5,
         color: badge.badge === 'queued' ? 'var(--tb-text-muted)' : 'var(--tb-text)',
         overflow: 'hidden',
         display: '-webkit-box',

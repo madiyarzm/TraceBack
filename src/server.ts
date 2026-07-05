@@ -6,6 +6,16 @@ import { checkGuards } from './guardsManager';
 let _server: http.Server | null = null;
 let _outputChannel: vscode.OutputChannel;
 
+/**
+ * Standing instruction injected into every user prompt via the
+ * UserPromptSubmit hook's `additionalContext`. Guarantees a todo breakdown
+ * exists so the prompt-chapter view always has task blocks to render.
+ */
+const TODO_INSTRUCTION =
+  'Before starting work, create a todo list breaking this task into ' +
+  'specific steps using the todo/task tools. Even for small tasks, ' +
+  'create at least one todo item.';
+
 export function startServer(outputChannel: vscode.OutputChannel, port: number): void {
   _outputChannel = outputChannel;
 
@@ -33,6 +43,21 @@ export function startServer(outputChannel: vscode.OutputChannel, port: number): 
         try {
           const payload = JSON.parse(body);
           const event = handleHookPayload(payload);
+
+          // UserPromptSubmit: inject a standing instruction so every task opens
+          // with a todo breakdown. This is what gives the prompt-chapter view
+          // its task blocks — Claude Code merges `additionalContext` into the
+          // prompt before the model sees it.
+          if (event && event.kind === 'user_prompt') {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+              hookSpecificOutput: {
+                hookEventName:     'UserPromptSubmit',
+                additionalContext: TODO_INSTRUCTION,
+              },
+            }));
+            return;
+          }
 
           // Guards: policy rules checked BEFORE execution. A match denies the
           // call immediately, fleet-wide, no human in the loop; the guard name
