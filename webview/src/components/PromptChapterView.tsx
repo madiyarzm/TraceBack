@@ -57,18 +57,21 @@ export default function PromptChapterView({
         borderBottom: '1px solid var(--tb-border)',
         background: 'var(--tb-surface)',
       }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: 12,
+          flexWrap: 'wrap',
+        }}>
           <div style={{
-            flex: 1, minWidth: 0,
-            fontSize: 17, fontWeight: 650, lineHeight: 1.35,
+            flex: '1 1 180px', minWidth: 140,
+            fontSize: 16, fontWeight: 650, lineHeight: 1.35,
             color: 'var(--tb-text)',
-            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+            whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',
           }}>
             “{chapter.text}”
           </div>
 
           {showControls && (
-            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <div style={{ display: 'flex', gap: 8, flexShrink: 0, marginLeft: 'auto' }}>
               {onPauseToggle && (
                 <ControlButton
                   onClick={onPauseToggle}
@@ -427,6 +430,7 @@ function ActionCardRow({ node, expandedId, onToggle }: {
 }) {
   return (
     <TimelineCard
+      bare
       node={node}
       expanded={expandedId === node.id}
       onToggle={onToggle}

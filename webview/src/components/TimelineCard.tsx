@@ -85,10 +85,13 @@ interface Props {
   flagged?: boolean;
   /** Set when this card was part of a PAST anomaly — permanent evidence tag. */
   historyReason?: string;
+  /** Chapter/task-block mode: no timeline dot or left status rail — a plain
+   *  full-width card whose colored pill carries the status. */
+  bare?: boolean;
   onToggle: (id: string) => void;
 }
 
-function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Props) {
+function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }: Props) {
   const [hovered, setHovered] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -192,21 +195,23 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
 
   return (
     <div
-      style={{ display: 'flex', gap: 10, position: 'relative' }}
+      style={{ display: 'flex', gap: bare ? 0 : 10, position: 'relative' }}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
     >
       {/* Timeline dot, sitting on the vertical line drawn by the parent */}
-      <div style={{
-        width: 9, height: 9, borderRadius: '50%',
-        background: color,
-        border: '2px solid var(--tb-bg, #07090d)',
-        marginTop: 11,
-        flexShrink: 0,
-        zIndex: 1,
-        ...(node.status === 'pending'
-          ? { animation: 'pendingPulse 1.6s ease-in-out infinite' } : {}),
-      }} />
+      {!bare && (
+        <div style={{
+          width: 9, height: 9, borderRadius: '50%',
+          background: color,
+          border: '2px solid var(--tb-bg, #07090d)',
+          marginTop: 11,
+          flexShrink: 0,
+          zIndex: 1,
+          ...(node.status === 'pending'
+            ? { animation: 'pendingPulse 1.6s ease-in-out infinite' } : {}),
+        }} />
+      )}
 
       {/* Card */}
       <div
@@ -215,7 +220,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
           flex: 1,
           minWidth: 0,
           background: isError
-            ? (hovered ? 'rgba(248,81,73,0.1)' : 'rgba(248,81,73,0.06)')
+            ? (hovered ? 'rgba(248,81,73,0.12)' : 'rgba(120,20,18,0.28)')
             : hovered ? 'var(--tb-surface-2)' : 'var(--tb-surface)',
           border: `1px solid ${
             flagged ? 'rgba(248,81,73,0.7)'
@@ -223,8 +228,8 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
             : hovered ? 'var(--tb-border-2)'
             : 'var(--tb-border)'
           }`,
-          borderLeft: `3px solid ${flagged ? '#f85149' : color}`,
-          borderRadius: 4,
+          ...(bare && !flagged && !isError ? {} : { borderLeft: `3px solid ${flagged ? '#f85149' : isError ? '#f85149' : color}` }),
+          borderRadius: bare ? 8 : 4,
           cursor: 'pointer',
           fontFamily: 'var(--tb-ui-font)',
           transition: 'background 0.12s, border-color 0.12s',
