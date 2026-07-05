@@ -124,8 +124,23 @@ export function computeChapters(nodes: TimelineNode[]): PromptChapter[] {
   for (const node of nodes) {
     if (node.toolName === '__thinking__') continue;
     if (node.toolName === '__prompt__') {
+      const text = (node.detail ?? node.label).trim();
+      // Slash commands (/login, /clear, /compact, /login …) are client
+      // commands, not task prompts. They must not open a chapter — otherwise
+      // the work that follows gets misfiled under "/login" instead of the
+      // real prompt.
+      if (text.startsWith('/')) continue;
+      // Re-submits: an identical or corrected prompt arriving before the
+      // current chapter did any work supersedes it in place, so a
+      // double-fired prompt doesn't leave an empty duplicate chapter.
+      if (current && current.actionCount === 0) {
+        current.id = node.id;
+        current.text = text;
+        current.timestamp = node.timestamp;
+        continue;
+      }
       if (current) current.endTimestamp = node.timestamp;
-      current = open(node.id, (node.detail ?? node.label).trim(), node.timestamp);
+      current = open(node.id, text, node.timestamp);
       continue;
     }
     if (!current) current = open('', '(before first prompt)', node.timestamp);

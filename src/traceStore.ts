@@ -233,7 +233,6 @@ class TraceStore {
     if (PLAN_TOOLS.has(post.toolName ?? '')) return;
 
     let preIndex = -1;
-    let toolCallIndex = -1;
     for (let i = session.events.length - 1; i >= 0; i--) {
       const e = session.events[i];
       if (e.kind === 'pre_tool_use' && e.toolName === post.toolName && !e.intent) {
@@ -242,13 +241,16 @@ class TraceStore {
       }
     }
     if (preIndex === -1) return;
-    // 0-based index of this call among all the session's tool calls.
-    toolCallIndex = session.events
-      .slice(0, preIndex + 1)
-      .filter((e) => e.kind === 'pre_tool_use').length - 1;
+    // How many tool calls come AFTER this one — its offset from the end of the
+    // transcript, which the tail-reader can locate reliably (see
+    // extractIntentForTool). Counting from the start breaks once the
+    // transcript outgrows the tail window.
+    const fromEnd = session.events
+      .slice(preIndex + 1)
+      .filter((e) => e.kind === 'pre_tool_use').length;
 
     const preEvent = session.events[preIndex];
-    void extractIntentForTool(session.id, toolCallIndex).then((intent) => {
+    void extractIntentForTool(session.id, fromEnd).then((intent) => {
       if (!intent || preEvent.intent) return;
       preEvent.intent = intent;
       this._rebuildNodes(session);

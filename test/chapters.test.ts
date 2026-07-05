@@ -40,6 +40,47 @@ describe('computeChapters', () => {
     expect(chapters[1].errorCount).toBe(1);
   });
 
+  it('coalesces a re-submitted prompt that did no work into one chapter', () => {
+    // The exact shape seen in a real session: the prompt fired twice before
+    // any tool ran, then all the work followed.
+    const nodes = [
+      prompt('refactor to async/await', T0),
+      prompt('refactor to async/await', T0 + 500),
+      node({ toolName: 'Read', timestamp: T0 + 1000 }),
+      node({ toolName: 'Edit', timestamp: T0 + 2000 }),
+    ];
+    const chapters = computeChapters(nodes);
+    expect(chapters).toHaveLength(1);
+    expect(chapters[0].text).toBe('refactor to async/await');
+    expect(chapters[0].actionCount).toBe(2);
+  });
+
+  it('ignores slash-command prompts so work stays under the real prompt', () => {
+    const nodes = [
+      prompt('refactor to async/await', T0),
+      prompt('/login', T0 + 500),
+      node({ toolName: 'Read', timestamp: T0 + 1000 }),
+      node({ toolName: 'Bash', timestamp: T0 + 2000 }),
+    ];
+    const chapters = computeChapters(nodes);
+    expect(chapters).toHaveLength(1);
+    expect(chapters[0].text).toBe('refactor to async/await');
+    expect(chapters[0].actionCount).toBe(2);
+  });
+
+  it('still opens a new chapter for a real prompt after work is done', () => {
+    const nodes = [
+      prompt('task one', T0),
+      node({ toolName: 'Read', timestamp: T0 + 1000 }),
+      prompt('task two', T0 + 5000),
+      node({ toolName: 'Edit', timestamp: T0 + 6000 }),
+    ];
+    const chapters = computeChapters(nodes);
+    expect(chapters).toHaveLength(2);
+    expect(chapters[0].text).toBe('task one');
+    expect(chapters[1].text).toBe('task two');
+  });
+
   it('puts pre-prompt work into a synthetic opening chapter', () => {
     const nodes = [
       node({ toolName: 'Read', timestamp: T0 }),

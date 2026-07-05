@@ -79,19 +79,24 @@ interface TranscriptItem {
 }
 
 /**
- * The assistant text immediately preceding the tool_use entry at
- * `toolCallIndex` (0-based, counted across the session), first sentence,
- * ≤120 chars. Returns null on any miss — the intent field is best-effort
- * everywhere and must never block rendering.
+ * The assistant reasoning behind a tool call: the nearest preceding text
+ * block's first sentence, ≤120 chars. Returns null on any miss — the intent
+ * field is best-effort everywhere and must never block rendering.
  *
- * Only the transcript tail is read. When the tail is truncated (huge
- * transcript), absolute indexing is unreliable, so we fall back to the most
- * recent tool_use — for a call that just completed that is almost always the
- * right entry anyway.
+ * `fromEnd` identifies the target tool_use counted BACKWARD from the last one
+ * in the transcript (0 = the most recent call). Counting from the end is
+ * stable even when only the transcript tail is read: the tail always ends at
+ * the live edge of the session, so from-end offsets line up regardless of how
+ * much history was truncated. (Counting from the start silently misattributed
+ * every call once the transcript outgrew the tail window.)
+ *
+ * The reasoning sentence is the nearest text block BEFORE the target, skipping
+ * over any sibling tool_use calls in between — Claude routinely writes one
+ * sentence then fires several tools, and they all share that intent.
  */
 export async function extractIntentForTool(
   sessionId: string,
-  toolCallIndex: number,
+  fromEnd: number,
 ): Promise<string | null> {
   const transcriptPath = _transcriptPaths.get(sessionId);
   if (!transcriptPath) return null;
@@ -124,29 +129,20 @@ export async function extractIntentForTool(
       }
     }
 
-    // Locate the target tool_use item.
-    const wholeFile = start === 0;
+    // Locate the target tool_use, counting backward from the last one.
     let target = -1;
-    if (wholeFile) {
-      let seen = 0;
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].kind !== 'tool_use') continue;
-        if (seen === toolCallIndex) { target = i; break; }
-        seen++;
-      }
-    }
-    if (target === -1) {
-      // Truncated tail (or index out of range): use the latest tool_use.
-      for (let i = items.length - 1; i >= 0; i--) {
-        if (items[i].kind === 'tool_use') { target = i; break; }
-      }
+    let seen = 0;
+    for (let i = items.length - 1; i >= 0; i--) {
+      if (items[i].kind !== 'tool_use') continue;
+      if (seen === fromEnd) { target = i; break; }
+      seen++;
     }
     if (target === -1) return null;
 
-    // The text block immediately preceding it.
+    // The nearest preceding text block — sibling tool calls between the text
+    // and this one don't reset it (they share the same stated intent).
     for (let i = target - 1; i >= 0; i--) {
       if (items[i].kind === 'text') return firstSentence(items[i].text ?? '');
-      if (items[i].kind === 'tool_use') break; // another call in between — no text for this one
     }
     return null;
   } catch {
