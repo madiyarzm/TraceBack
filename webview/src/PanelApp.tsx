@@ -11,7 +11,7 @@ import PromptChapterView from './components/PromptChapterView';
 import RightPanel from './components/RightPanel';
 import ZoomControl, { ZoomLevel } from './components/ZoomControl';
 import { formatDuration } from './components/TimelineCard';
-import { AlertIcon } from './components/Icons';
+import { AlertIcon, CheckIcon, FileIcon } from './components/Icons';
 import { agentIdentity } from './codename';
 import { anomaliesFor, computeChapters } from './chapters';
 import { useSessionFeed, FullSessionData, ArchivedMeta } from './useSessionFeed';
@@ -82,17 +82,39 @@ export default function PanelApp() {
         minHeight: 0,
       }}>
         <div style={{
-          padding: '14px 14px 10px',
-          fontSize: 13, fontWeight: 700, letterSpacing: '0.02em',
-          color: 'var(--tb-text)',
-          display: 'flex', alignItems: 'center', gap: 7,
+          padding: '16px 16px 14px',
+          borderBottom: '1px solid var(--tb-border)',
+          display: 'flex', alignItems: 'center', gap: 10,
           flexShrink: 0,
         }}>
-          <span style={{ color: 'var(--tb-blue)' }}>◉</span> TraceBack
+          <div
+            className={isLive ? 'live-dot' : ''}
+            style={{
+              width: 9, height: 9, borderRadius: '50%', flexShrink: 0,
+              background: isLive ? 'var(--tb-green)' : 'var(--tb-text-dim)',
+            }}
+          />
+          <div style={{ minWidth: 0 }}>
+            <div style={{
+              fontSize: 15, fontWeight: 700, lineHeight: 1.2,
+              color: display ? agentIdentity(display.id).color : 'var(--tb-text)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              {display ? agentIdentity(display.id).name : 'TraceBack'}
+            </div>
+            {display && (
+              <div style={{
+                fontSize: 11.5, color: 'var(--tb-text-muted)', marginTop: 2,
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {display.label}
+              </div>
+            )}
+          </div>
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-          {sessions.length > 0 && (
+          {sessions.length > 1 && (
             <>
               <RailLabel>Live agents</RailLabel>
               {sessions.map((s) => (
@@ -148,12 +170,16 @@ export default function PanelApp() {
           <div style={{
             flexShrink: 0,
             borderTop: '1px solid var(--tb-border)',
-            padding: 10,
-            display: 'flex', flexDirection: 'column', gap: 6,
+            padding: 12,
+            display: 'flex', flexDirection: 'column', gap: 8,
           }}>
-            <RailButton onClick={feed.exportJson}>Export session</RailButton>
+            <RailButton onClick={feed.exportJson} icon={<DownloadIcon size={15} />}>
+              Export session
+            </RailButton>
             <CopyRailButton onCopy={feed.copyReport} />
-            <RailButton onClick={feed.exportHtml}>Share as HTML</RailButton>
+            <RailButton onClick={feed.exportHtml} icon={<ShareIcon size={15} />}>
+              Share as HTML
+            </RailButton>
           </div>
         )}
       </div>
@@ -168,25 +194,6 @@ export default function PanelApp() {
           background: 'var(--tb-surface)',
           flexShrink: 0,
         }}>
-          <div
-            className={isLive ? 'live-dot' : ''}
-            style={{
-              width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-              background: isLive ? 'var(--tb-green)' : 'var(--tb-text-dim)',
-            }}
-          />
-          <span style={{
-            fontSize: 13, fontWeight: 600,
-            color: display ? agentIdentity(display.id).color : 'var(--tb-text)',
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }}>
-            {display ? agentIdentity(display.id).name : 'No session'}
-            {display && (
-              <span style={{ fontWeight: 400, color: 'var(--tb-text-muted)' }}>
-                {' '}· {display.label}
-              </span>
-            )}
-          </span>
           {archived && (
             <span style={{
               fontSize: 9, fontWeight: 700, letterSpacing: '0.06em',
@@ -223,23 +230,7 @@ export default function PanelApp() {
             }}>
               {/* ── Main column: fills all available width ── */}
               <div style={{ flex: 1, minWidth: 0 }}>
-                <SessionOdometer
-                  nodes={traceNodes}
-                  awaitingInput={archived ? undefined : display?.awaitingInput}
-                  isLive={isLive}
-                  anomaly={anomaly}
-                  anomalyCount={display?.anomalyHistory?.length ?? 0}
-                  paused={display?.paused ?? false}
-                  onPauseToggle={archived ? undefined : feed.pauseToggle}
-                  onRedirect={archived ? undefined : feed.redirect}
-                  realTokens={display?.contextTokens}
-                  aiSummary={display?.aiSummary}
-                  chatAnswer={chatAnswer}
-                  chatLoading={chatLoading}
-                  onChat={feed.chat}
-                />
-
-                {zoom === 'chapters' && selectedChapter && (
+                {zoom === 'chapters' && selectedChapter ? (
                   <PromptChapterView
                     chapter={selectedChapter}
                     isLive={isLive && selectedIndex === chapters.length}
@@ -247,6 +238,26 @@ export default function PanelApp() {
                     realTokens={display?.contextTokens}
                     expandedId={expandedId}
                     onToggle={(id) => setExpandedId(expandedId === id ? null : id)}
+                    anomaly={selectedIndex === chapters.length ? anomaly : undefined}
+                    paused={display?.paused ?? false}
+                    onPauseToggle={archived ? undefined : feed.pauseToggle}
+                    onRedirect={archived ? undefined : feed.redirect}
+                  />
+                ) : (
+                  <SessionOdometer
+                    nodes={traceNodes}
+                    awaitingInput={archived ? undefined : display?.awaitingInput}
+                    isLive={isLive}
+                    anomaly={anomaly}
+                    anomalyCount={display?.anomalyHistory?.length ?? 0}
+                    paused={display?.paused ?? false}
+                    onPauseToggle={archived ? undefined : feed.pauseToggle}
+                    onRedirect={archived ? undefined : feed.redirect}
+                    realTokens={display?.contextTokens}
+                    aiSummary={display?.aiSummary}
+                    chatAnswer={chatAnswer}
+                    chatLoading={chatLoading}
+                    onChat={feed.chat}
                   />
                 )}
 
@@ -438,8 +449,8 @@ function HistoryRailCard({ meta, active, onClick }: {
 
 // ── Buttons ─────────────────────────────────────────────────────────────────
 
-function RailButton({ children, onClick }: {
-  children: React.ReactNode; onClick: () => void;
+function RailButton({ children, onClick, icon }: {
+  children: React.ReactNode; onClick: () => void; icon?: React.ReactNode;
 }) {
   const [hovered, setHovered] = useState(false);
   return (
@@ -448,18 +459,21 @@ function RailButton({ children, onClick }: {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        fontSize: 10.5, fontFamily: 'var(--tb-ui-font)', fontWeight: 500,
-        padding: '6px 10px', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: 10,
+        width: '100%',
+        fontSize: 12, fontFamily: 'var(--tb-ui-font)', fontWeight: 550,
+        padding: '10px 13px', cursor: 'pointer',
         textAlign: 'left',
-        background: hovered ? 'rgba(88,166,255,0.07)' : 'transparent',
-        color: hovered ? 'var(--tb-blue)' : 'var(--tb-text-muted)',
-        border: `1px solid ${hovered ? 'rgba(88,166,255,0.35)' : 'var(--tb-border)'}`,
-        borderRadius: 4,
+        background: hovered ? 'rgba(88,166,255,0.08)' : 'var(--tb-surface-2)',
+        color: hovered ? 'var(--tb-blue)' : 'var(--tb-text)',
+        border: `1px solid ${hovered ? 'rgba(88,166,255,0.4)' : 'var(--tb-border)'}`,
+        borderRadius: 8,
         transition: 'color 0.1s, border-color 0.1s, background 0.1s',
         whiteSpace: 'nowrap',
       }}
     >
-      {children}
+      {icon && <span style={{ display: 'flex', flexShrink: 0, opacity: 0.85 }}>{icon}</span>}
+      <span>{children}</span>
     </button>
   );
 }
@@ -467,13 +481,41 @@ function RailButton({ children, onClick }: {
 function CopyRailButton({ onCopy }: { onCopy: () => Promise<void> }) {
   const [copied, setCopied] = useState(false);
   return (
-    <RailButton onClick={async () => {
-      await onCopy();
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    }}>
-      {copied ? '✓ Copied to clipboard' : 'Markdown report'}
+    <RailButton
+      icon={copied ? <CheckIcon size={15} /> : <FileIcon size={15} />}
+      onClick={async () => {
+        await onCopy();
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      }}
+    >
+      {copied ? 'Copied to clipboard' : 'Markdown report'}
     </RailButton>
+  );
+}
+
+function DownloadIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
+         style={{ display: 'block' }}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M12 15V3" />
+    </svg>
+  );
+}
+
+function ShareIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
+         style={{ display: 'block' }}>
+      <circle cx="18" cy="5" r="3" />
+      <circle cx="6" cy="12" r="3" />
+      <circle cx="18" cy="19" r="3" />
+      <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
+    </svg>
   );
 }
 

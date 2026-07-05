@@ -239,6 +239,10 @@ body {
 
 .live-dot { animation: livePulse 1.5s ease-in-out infinite; }
 
+/* ─── Task spinner (active task block) ───────────────────────── */
+@keyframes tbSpin { to { transform: rotate(360deg); } }
+.tb-spin { animation: tbSpin 0.8s linear infinite; }
+
 /* ─── Scrollbar ──────────────────────────────────────────────── */
 ::-webkit-scrollbar        { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track  { background: transparent; }

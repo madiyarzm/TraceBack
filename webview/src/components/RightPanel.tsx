@@ -120,9 +120,9 @@ function AnomaliesTab({ chapters, selectedIndex, records }: {
 
   return (
     <div style={{ padding: '10px 12px 20px' }}>
-      <SectionLabel>This prompt</SectionLabel>
+      <SectionLabel>This session</SectionLabel>
       {current.length === 0 ? (
-        <div style={{ fontSize: 10.5, color: 'var(--tb-text-dim)', padding: '4px 2px 12px' }}>
+        <div style={{ fontSize: 11, color: 'var(--tb-text-dim)', padding: '4px 2px 12px' }}>
           No anomalies in this prompt.
         </div>
       ) : (
@@ -162,18 +162,21 @@ function AnomalyItem({ record }: { record: AnomalyRecordUI }) {
 
   return (
     <div style={{
-      border: `1px solid ${color}45`,
-      borderLeft: `3px solid ${color}`,
-      borderRadius: 5,
-      background: `${color}0d`,
-      padding: '8px 10px',
-      marginBottom: 8,
+      border: `1px solid ${color}55`,
+      borderRadius: 8,
+      background: sev === 'high' ? 'rgba(120,20,18,0.32)' : 'rgba(90,66,12,0.3)',
+      padding: '11px 13px',
+      marginBottom: 9,
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-        <span style={{ color, display: 'flex' }}><Icon size={12} /></span>
-        <span style={{ fontSize: 11, fontWeight: 600, color }}>{title}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
+        <span style={{ color, display: 'flex' }}><Icon size={14} /></span>
+        <span style={{ fontSize: 12.5, fontWeight: 700, color }}>{title}</span>
       </div>
-      <div style={{ fontSize: 10.5, lineHeight: 1.45, color: 'var(--tb-text)', wordBreak: 'break-word' }}>
+      <div style={{
+        fontSize: 11.5, lineHeight: 1.45,
+        color: sev === 'high' ? '#ffb3ac' : '#e8c877',
+        wordBreak: 'break-word',
+      }}>
         {desc}
       </div>
     </div>
@@ -183,14 +186,14 @@ function AnomalyItem({ record }: { record: AnomalyRecordUI }) {
 function HistorySection({ title, count, children }: {
   title: string; count: number; children: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   return (
-    <div style={{ marginTop: 6 }}>
+    <div style={{ marginTop: 12 }}>
       <div
         onClick={() => setOpen((v) => !v)}
         style={{
           display: 'flex', alignItems: 'center', gap: 6,
-          padding: '5px 2px', cursor: 'pointer', userSelect: 'none',
+          padding: '5px 2px 8px', cursor: 'pointer', userSelect: 'none',
         }}
       >
         <span style={{

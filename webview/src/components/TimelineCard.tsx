@@ -56,6 +56,19 @@ const TOOL_ICON: Record<string, string> = {
   Agent:     '◈',
 };
 
+/** Tool-type accent color for the pill (independent of run status). */
+const TOOL_COLOR: Record<string, string> = {
+  Read: '#58a6ff', Grep: '#58a6ff', Glob: '#58a6ff', LS: '#58a6ff', NotebookRead: '#58a6ff',
+  Bash: '#3fb950',
+  Edit: '#d29922', Write: '#d29922', MultiEdit: '#d29922', NotebookEdit: '#d29922', FileWrite: '#d29922',
+  WebSearch: '#a371f7', WebFetch: '#a371f7',
+  Agent: '#a371f7',
+};
+
+function toolColor(name: string): string {
+  return TOOL_COLOR[name] ?? '#7d8590';
+}
+
 export function formatDuration(ms?: number): string | null {
   if (ms === undefined || ms <= 0) return null;
   if (ms < 1000)   return `${ms}ms`;
@@ -172,6 +185,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
   }
 
   const color    = STATUS_COLOR[node.status];
+  const tcolor   = toolColor(node.toolName);
   const icon     = TOOL_ICON[node.toolName] ?? '·';
   const duration = formatDuration(node.durationMs);
   const isError  = node.status === 'error';
@@ -241,15 +255,19 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
 
         {/* ── Compact header row ── */}
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 7,
+          display: 'flex', alignItems: 'center', gap: 8,
           padding: '7px 10px',
         }}>
-          <span style={{ fontSize: 11, color, flexShrink: 0 }}>{icon}</span>
           <span style={{
-            fontSize: 10, fontWeight: 600, flexShrink: 0,
-            color: 'var(--tb-text-muted)',
+            display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
+            fontSize: 9.5, fontWeight: 700,
             letterSpacing: '0.04em', textTransform: 'uppercase',
+            color: tcolor,
+            background: `${tcolor}1f`,
+            border: `1px solid ${tcolor}3d`,
+            borderRadius: 4, padding: '2px 7px',
           }}>
+            <span style={{ fontSize: 10 }}>{icon}</span>
             {node.toolName}
           </span>
           <span style={{
