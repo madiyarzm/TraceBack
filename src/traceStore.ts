@@ -1,12 +1,13 @@
 import * as vscode from 'vscode';
 import { AnomalyRecord, AnomalyState, detectAnomaly } from './anomalyDetector';
-import { readContextTokens } from './tokenReader';
+import { extractIntentForTool, noteTranscript, readContextTokens } from './tokenReader';
 
 export type EventKind =
   | 'pre_tool_use'
   | 'post_tool_use'
   | 'stop'
-  | 'notification';
+  | 'notification'
+  | 'user_prompt';
 
 export type ToolName =
   | 'Read'
@@ -35,6 +36,9 @@ export interface TraceEvent {
   /** Working directory of the agent session (from the hook payload). */
   cwd?: string;
   timestamp: number;
+  /** First sentence of the assistant text preceding this call (transcript).
+   *  Best-effort and always optional — attached async after PostToolUse. */
+  intent?: string;
 }
 
 export interface BatchItem {
@@ -42,6 +46,8 @@ export interface BatchItem {
   detail?: string;
   status: NodeStatus;
   durationMs?: number;
+  toolInput?: Record<string, unknown>;
+  intent?: string;
 }
 
 export interface TraceNode {
@@ -58,6 +64,25 @@ export interface TraceNode {
   durationMs?: number;
   isBatch?: boolean;
   batchItems?: BatchItem[];
+  /** The in-progress plan item this call ran under (from TodoWrite state). */
+  objective?: string;
+  /** TodoWrite call — rendered as a quiet "plan updated" divider, not a card. */
+  isPlanUpdate?: boolean;
+  /** Why the agent made this call — from the transcript, may arrive late. */
+  intent?: string;
+}
+
+export interface PlanItem {
+  /** Task id for TaskCreate/TaskUpdate flows ("1", "2", …); absent for TodoWrite. */
+  id?: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  activeForm?: string;
+}
+
+export interface SessionPlan {
+  items: PlanItem[];
+  updatedAt: number;
 }
 
 export interface TraceSession {
@@ -78,6 +103,11 @@ export interface TraceSession {
   cwd?: string;
   /** Breakpoint: when true, the server parks the next PreToolUse call. */
   paused?: boolean;
+  /** Set while Claude waits on the user (permission prompt / idle input);
+   *  holds the notification message. Cleared by any subsequent activity. */
+  awaitingInput?: string;
+  /** Live task plan from the agent's TodoWrite calls. */
+  plan?: SessionPlan;
 }
 
 class TraceStore {
@@ -152,9 +182,17 @@ class TraceStore {
     // their first completed turn.
     if (event.kind === 'stop') session.stopped = true;
     else if (session.stopped) session.stopped = false;
+
+    // "Waiting for you" state: a Notification means Claude is blocked on the
+    // user (permission prompt, idle). Any other activity clears it.
+    if (event.kind === 'notification') {
+      session.awaitingInput = event.toolResponse || 'Waiting for your input';
+    } else {
+      session.awaitingInput = undefined;
+    }
+
     session.events.push(event);
-    const raw = buildNodes(session.events, session.stopped);
-    session.nodes = applyBatchGrouping(raw);
+    this._rebuildNodes(session);
 
     // Recompute anomaly state on every event (O(1), tail-only). A finished
     // session can't be anomalous; otherwise the state self-clears as soon as
@@ -164,14 +202,58 @@ class TraceStore {
       session.stopped ? undefined : detectAnomaly(session.events, Date.now())
     );
 
-    if (event.transcriptPath) session.transcriptPath = event.transcriptPath;
+    if (event.transcriptPath) {
+      session.transcriptPath = event.transcriptPath;
+      noteTranscript(session.id, event.transcriptPath);
+    }
     if (event.cwd && session.cwd !== event.cwd) {
       session.cwd   = event.cwd;
       session.label = event.cwd.split('/').filter(Boolean).pop() ?? session.label;
     }
     this._maybeRefreshTokens(session);
+    if (event.kind === 'post_tool_use') this._attachIntent(session, event);
 
     this._onDidUpdate.fire(session);
+  }
+
+  private _rebuildNodes(session: TraceSession): void {
+    const { nodes: raw, plan } = buildNodes(session.events, session.stopped);
+    session.nodes = applyBatchGrouping(raw);
+    session.plan  = plan;
+  }
+
+  /**
+   * Best-effort intent extraction for the call that just completed: the
+   * transcript now contains the assistant text written right before this
+   * tool_use. Attached to the PRE event (nodes are rebuilt from events, so
+   * anything stored on a node alone would be lost on the next rebuild).
+   * Never blocks — the UI renders with or without it.
+   */
+  private _attachIntent(session: TraceSession, post: TraceEvent): void {
+    if (PLAN_TOOLS.has(post.toolName ?? '')) return;
+
+    let preIndex = -1;
+    let toolCallIndex = -1;
+    for (let i = session.events.length - 1; i >= 0; i--) {
+      const e = session.events[i];
+      if (e.kind === 'pre_tool_use' && e.toolName === post.toolName && !e.intent) {
+        preIndex = i;
+        break;
+      }
+    }
+    if (preIndex === -1) return;
+    // 0-based index of this call among all the session's tool calls.
+    toolCallIndex = session.events
+      .slice(0, preIndex + 1)
+      .filter((e) => e.kind === 'pre_tool_use').length - 1;
+
+    const preEvent = session.events[preIndex];
+    void extractIntentForTool(session.id, toolCallIndex).then((intent) => {
+      if (!intent || preEvent.intent) return;
+      preEvent.intent = intent;
+      this._rebuildNodes(session);
+      this._onDidUpdate.fire(session);
+    });
   }
 
   /**
@@ -232,7 +314,10 @@ class TraceStore {
     if (isOnset) {
       const record: AnomalyRecord = {
         type:            next.type!,
-        reason:          next.reason ?? 'Anomaly detected',
+        severity:        next.severity ?? 'medium',
+        title:           next.title ?? 'Anomaly',
+        description:     next.description ?? next.reason ?? 'Anomaly detected',
+        reason:          next.reason ?? next.description ?? 'Anomaly detected',
         flaggedEventIds: next.flaggedEventIds,
         detectedAt:      Date.now(),
       };
@@ -273,11 +358,87 @@ class TraceStore {
 
 // ─── Pass 1: build flat node list ────────────────────────────────────────────
 
-function buildNodes(events: TraceEvent[], stopped: boolean): TraceNode[] {
+/** Extract a validated plan from TodoWrite tool input; null when malformed. */
+export function parsePlanItems(input?: Record<string, unknown>): PlanItem[] | null {
+  if (!input || !Array.isArray(input.todos)) return null;
+  const items: PlanItem[] = [];
+  for (const raw of input.todos as Record<string, unknown>[]) {
+    if (!raw || typeof raw.content !== 'string') continue;
+    const status = raw.status === 'in_progress' || raw.status === 'completed'
+      ? raw.status
+      : 'pending';
+    items.push({
+      content: raw.content,
+      status,
+      activeForm: typeof raw.activeForm === 'string' ? raw.activeForm : undefined,
+    });
+  }
+  return items.length > 0 ? items : null;
+}
+
+/** Tool names that mutate the agent's plan — two generations of Claude Code:
+ *  TodoWrite (full-list snapshots) and TaskCreate/TaskUpdate (incremental). */
+const PLAN_TOOLS = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate']);
+
+interface BuildResult {
+  nodes: TraceNode[];
+  plan?: SessionPlan;
+}
+
+function buildNodes(events: TraceEvent[], stopped: boolean): BuildResult {
   const nodes: TraceNode[] = [];
+  // The in-progress task at each point in the stream — new tool nodes are
+  // stamped with it so the UI can group effort by objective.
+  let activeObjective: string | undefined;
+  let plan: SessionPlan | undefined;
+  let taskCounter = 0; // TaskCreate ids are assigned sequentially per session
+
+  function refreshObjective() {
+    const current = plan?.items.find((i) => i.status === 'in_progress');
+    if (current) activeObjective = current.activeForm ?? current.content;
+  }
+
+  function applyPlanTool(event: TraceEvent) {
+    const input = event.toolInput;
+    if (event.toolName === 'TodoWrite') {
+      const items = parsePlanItems(input);
+      if (items) plan = { items, updatedAt: event.timestamp };
+    } else if (event.toolName === 'TaskCreate') {
+      if (typeof input?.subject !== 'string') return;
+      taskCounter++;
+      const item: PlanItem = {
+        id:         String(taskCounter),
+        content:    input.subject,
+        status:     'pending',
+        activeForm: typeof input.activeForm === 'string' ? input.activeForm : undefined,
+      };
+      plan = { items: [...(plan?.items ?? []), item], updatedAt: event.timestamp };
+    } else if (event.toolName === 'TaskUpdate') {
+      const rawId = input?.taskId;
+      const id =
+        typeof rawId === 'string' ? rawId.replace(/^#/, '')
+        : typeof rawId === 'number' ? String(rawId)
+        : null;
+      if (!id || !plan) return;
+      const items = plan.items
+        .filter((it) => !(it.id === id && input?.status === 'deleted'))
+        .map((it) => it.id !== id ? it : {
+          ...it,
+          status:
+            input?.status === 'in_progress' || input?.status === 'completed'
+              ? input.status
+              : it.status,
+          activeForm: typeof input?.activeForm === 'string' ? input.activeForm : it.activeForm,
+          content:    typeof input?.subject === 'string' ? input.subject : it.content,
+        });
+      plan = { items, updatedAt: event.timestamp };
+    }
+    refreshObjective();
+  }
 
   for (const event of events) {
     if (event.kind === 'pre_tool_use') {
+      if (PLAN_TOOLS.has(event.toolName ?? '')) applyPlanTool(event);
       const label = buildLabel(event.toolName ?? 'Unknown', event.toolInput);
 
       // Remove the trailing "Thinking…" node — a real tool is starting now
@@ -304,6 +465,9 @@ function buildNodes(events: TraceEvent[], stopped: boolean): TraceNode[] {
           eventIds: [event.id],
           timestamp: event.timestamp,
           toolInput: event.toolInput,
+          objective: activeObjective,
+          isPlanUpdate: PLAN_TOOLS.has(event.toolName ?? '') || undefined,
+          intent: event.intent,
         });
       }
       continue;
@@ -334,6 +498,22 @@ function buildNodes(events: TraceEvent[], stopped: boolean): TraceNode[] {
       continue;
     }
 
+    if (event.kind === 'user_prompt' && event.toolResponse) {
+      const last = nodes[nodes.length - 1];
+      if (last?.toolName === '__thinking__') nodes.pop();
+      nodes.push({
+        id: event.id,
+        toolName: '__prompt__',
+        status: 'success',
+        label: truncate(event.toolResponse.replace(/\s+/g, ' '), 120),
+        detail: event.toolResponse,
+        count: 1,
+        eventIds: [event.id],
+        timestamp: event.timestamp,
+      });
+      continue;
+    }
+
     if (event.kind === 'stop') {
       const last = nodes[nodes.length - 1];
       if (last?.toolName === '__thinking__') nodes.pop();
@@ -343,7 +523,7 @@ function buildNodes(events: TraceEvent[], stopped: boolean): TraceNode[] {
     }
   }
 
-  return nodes;
+  return { nodes, plan };
 }
 
 // ─── Pass 2: batch-group consecutive same-tool runs ──────────────────────────
@@ -357,7 +537,7 @@ function applyBatchGrouping(nodes: TraceNode[]): TraceNode[] {
   while (i < nodes.length) {
     const current = nodes[i];
 
-    if (current.toolName === '__thinking__') {
+    if (current.toolName.startsWith('__') || current.isPlanUpdate) {
       result.push(current);
       i++;
       continue;
@@ -367,7 +547,8 @@ function applyBatchGrouping(nodes: TraceNode[]): TraceNode[] {
     while (
       runEnd < nodes.length &&
       nodes[runEnd].toolName === current.toolName &&
-      nodes[runEnd].toolName !== '__thinking__'
+      !nodes[runEnd].toolName.startsWith('__') &&
+      !nodes[runEnd].isPlanUpdate
     ) {
       runEnd++;
     }
@@ -393,6 +574,8 @@ function applyBatchGrouping(nodes: TraceNode[]): TraceNode[] {
           detail: n.detail,
           status: n.status,
           durationMs: n.durationMs,
+          toolInput: n.toolInput,
+          intent: n.intent,
         })),
         detail: batchNodes
           .map((n, idx) => `── [${idx + 1}/${runLength}] ${n.label}\n${n.detail ?? '(no output)'}`)

@@ -94,11 +94,14 @@ No sockets between extension and webview — just VS Code's `postMessage`. No po
 Every tool call renders as a card — `pending → success / error` — in real time. Click any card to inspect the full tool input and output inline. File edits (`Edit`, `Write`, `MultiEdit`) render as a Git-style line diff.
 
 ### Anomaly engine
-A pure, tail-only detector that re-evaluates on every event in O(1). Catches three failure modes automatically:
+A pure, tail-only detector that re-evaluates on every event in O(1). Catches six failure modes automatically:
 
-- **Repeater** — 4 identical tool calls in a row (the agent is stuck in a loop).
-- **Error thrash** — 3 consecutive failed tool calls (the agent is making things worse).
-- **Silent stall** — a tool call pending for more than 60 seconds with no response.
+- **Near-duplicate loop** *(high)* — same tool + base command 3+ times in the last 10 events, args ignored.
+- **Error thrash** *(high)* — 3 consecutive failed tool calls (the agent is making things worse).
+- **Thrash without progress** *(high)* — the same file read→edited 3+ times in a row with no task change.
+- **Silent stall** *(medium)* — a tool call pending for more than 120 seconds with no response.
+- **Context spiral** *(medium)* — 8+ consecutive reads with no edit, write, or command; exploring aimlessly.
+- **Scope creep** *(medium)* — edits/writes landing outside the session's working directory.
 
 Anomalies fire a native VS Code notification (even with the sidebar hidden), permanently tag the implicated cards, and count on the odometer. Live alerts self-clear the moment the condition stops holding — the evidence trail doesn't.
 
@@ -109,17 +112,21 @@ Hit **⏸ pause** and the agent freezes at its next tool call — TraceBack hold
 
 Your message is delivered into the agent's context as the reason its call was denied. The agent reads it and changes course, mid-run. Human-in-the-loop steering for black-box agents.
 
-### Tripwires
-Policy rules that protect **every session at once**, no human watching:
+### Guards
+Policy rules that protect **every session at once**, no human watching. Four built-in guards toggle on/off from the Guards tab in the panel:
+
+- **Never delete files** — blocks any `rm` command or DeleteFile call
+- **Stay in project folder** — blocks edits/writes outside the session's working directory
+- **Protect .env and secrets** — blocks reads/edits of `.env`, `.secret`, and `secrets/` paths
+- **No git push to main** — intercepts push commands targeting `main`
+
+Custom guards are plain regexes matched against the full tool call (tool name + arguments):
 
 ```jsonc
-"traceback.tripwires": [
-  { "tool": "Bash",       "pattern": "rm -rf|sudo ", "reason": "Destructive commands are blocked." },
-  { "tool": "Edit|Write", "pattern": "\\.env|prod/", "reason": "Don't touch secrets or prod config." }
-]
+"traceback.customGuards": ["rm -rf|sudo ", "curl.*prod"]
 ```
 
-A matching call is denied *before it executes* via Claude Code's hook decision protocol, the agent is told why, and you get a notification. The CLI asks per session, interactively; tripwires are fleet-wide policy.
+A matching call is denied *before it executes* via Claude Code's hook decision protocol; the guard's name is fed back into the agent's context so it knows why and can change course. The CLI asks per session, interactively; guards are fleet-wide policy.
 
 ### Multi-agent fleet view
 Run multiple Claude Code sessions in parallel? TraceBack lists all of them in a dropdown with live status badges (🟢 running, ⚪ done, 🔴 anomalous). Background anomalies surface as a pulsing pill next to the dropdown — you see a failure in agent #3 even while watching agent #1.
@@ -200,7 +207,8 @@ All settings live under `traceback.*` in VS Code settings.
 | `traceback.groqModel` | `"llama-3.1-8b-instant"` | Groq model for summaries and chat |
 | `traceback.ollamaModel` | `"llama3.2"` | Ollama model (must be pulled locally) |
 | `traceback.ollamaPort` | `11434` | Ollama port |
-| `traceback.tripwires` | `[]` | Policy rules that block matching tool calls before execution |
+| `traceback.guards` | `{}` | Built-in guard toggles (`never_delete`, `stay_in_project`, `protect_secrets`, `no_push_main`) |
+| `traceback.customGuards` | `[]` | Custom guard regexes that block matching tool calls before execution |
 
 ### Enabling the Narrative Engine
 

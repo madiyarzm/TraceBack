@@ -12,6 +12,7 @@ coverage/
 .env.local
 .env.*.local
 
-# private notes
-docs/PUBLISHING.md
-*.vsix
+# Hide all markdown files, reports, and docs (keep only README.md tracked)
+*.md
+!README.md
+docs/

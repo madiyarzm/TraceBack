@@ -1,6 +1,10 @@
 import * as vscode from 'vscode';
 import { TraceSession, traceStore } from './traceStore';
 import { flushSession } from './server';
+import { listSessions, loadSession } from './sessionArchive';
+import {
+  addCustomGuard, BuiltinGuardKey, getGuardsState, removeCustomGuard, setBuiltinGuard,
+} from './guardsManager';
 
 export interface LLMQueryEvent {
   question:    string;
@@ -16,7 +20,8 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
-    private readonly _outputChannel: vscode.OutputChannel
+    private readonly _outputChannel: vscode.OutputChannel,
+    private readonly _archiveDir: string
   ) {}
 
   resolveWebviewView(
@@ -33,7 +38,7 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
       ],
     };
 
-    webviewView.webview.html = this._getHtml(webviewView.webview);
+    webviewView.webview.html = this._getHtml(webviewView.webview, 'sidebar');
 
     webviewView.webview.onDidReceiveMessage((message) => {
       this._handleWebviewMessage(message);
@@ -51,12 +56,12 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
       // before any tool ran) must not spawn ghost swimlanes or trip the
       // swimlane-mode threshold.
       allSessions: traceStore.getAllSessions()
-        .filter((s) => s.nodes.some((n) => n.toolName !== '__thinking__'))
+        .filter((s) => s.nodes.some((n) => !n.toolName.startsWith('__')))
         .map((s) => ({
         id:           s.id,
         label:        s.label,
         startedAt:    s.startedAt,
-        nodeCount:    s.nodes.filter((n) => n.toolName !== '__thinking__').length,
+        nodeCount:    s.nodes.filter((n) => !n.toolName.startsWith('__')).length,
         stopped:      s.stopped,
         nodes:        s.nodes,
         anomaly:        s.anomaly,
@@ -65,7 +70,10 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
         contextTokens: s.contextTokens,
         cwd:           s.cwd,
         paused:        s.paused,
+        awaitingInput: s.awaitingInput,
+        plan:          s.plan,
         })),
+      history: listSessions(this._archiveDir),
     };
     this._view?.webview.postMessage(payload);
     this._panel?.webview.postMessage(payload);
@@ -96,7 +104,7 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
       }
     );
 
-    this._panel.webview.html = this._getHtml(this._panel.webview);
+    this._panel.webview.html = this._getHtml(this._panel.webview, 'panel');
 
     this._panel.webview.onDidReceiveMessage((message) => {
       this._handleWebviewMessage(message);
@@ -110,8 +118,30 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
   private _handleWebviewMessage(message: { type: string; [key: string]: unknown }): void {
     switch (message.type) {
       case 'ready': {
+        this._postGuards();
         const active = traceStore.getActiveSession();
-        if (active) this.postSessionUpdate(active);
+        if (active) {
+          this.postSessionUpdate(active);
+        } else {
+          // No live session yet — still surface archived history in the panel.
+          const msg = { type: 'history_update', history: listSessions(this._archiveDir) };
+          this._view?.webview.postMessage(msg);
+          this._panel?.webview.postMessage(msg);
+        }
+        break;
+      }
+      case 'open_full_panel':
+        vscode.commands.executeCommand('traceback.openMap');
+        break;
+      case 'load_archived': {
+        if (typeof message.sessionId === 'string') {
+          const archived = loadSession(this._archiveDir, message.sessionId);
+          if (archived) {
+            const msg = { type: 'archived_session', session: archived };
+            this._view?.webview.postMessage(msg);
+            this._panel?.webview.postMessage(msg);
+          }
+        }
         break;
       }
       case 'open_file':
@@ -156,12 +186,42 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
           nodeContext: (message.nodeContext as string) ?? '',
         });
         break;
+      case 'set_guard':
+        if (typeof message.key === 'string') {
+          void setBuiltinGuard(message.key as BuiltinGuardKey, message.enabled === true)
+            .then(() => this._postGuards());
+        }
+        break;
+      case 'add_custom_guard':
+        if (typeof message.pattern === 'string') {
+          addCustomGuard(message.pattern)
+            .then(() => this._postGuards())
+            .catch((err) => {
+              vscode.window.showWarningMessage(`TraceBack: ${err.message ?? err}`);
+              this._postGuards();
+            });
+        }
+        break;
+      case 'remove_custom_guard':
+        if (typeof message.pattern === 'string') {
+          void removeCustomGuard(message.pattern).then(() => this._postGuards());
+        }
+        break;
+      case 'get_guards':
+        this._postGuards();
+        break;
       default:
         this._outputChannel.appendLine(`[TraceBack] Unknown webview message: ${message.type}`);
     }
   }
 
-  private _getHtml(webview: vscode.Webview): string {
+  private _postGuards(): void {
+    const msg = { type: 'guards_update', guards: getGuardsState() };
+    this._view?.webview.postMessage(msg);
+    this._panel?.webview.postMessage(msg);
+  }
+
+  private _getHtml(webview: vscode.Webview, mode: 'sidebar' | 'panel'): string {
     const distUri   = vscode.Uri.joinPath(this._extensionUri, 'webview', 'dist');
     // Cache-bust: the bundle filename is stable (no content hash), so without a
     // changing query string the webview serves a stale cached copy across reloads.
@@ -189,6 +249,7 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
   <div id="root"></div>
+  <script nonce="${nonce}">window.__TB_MODE__ = '${mode}';</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

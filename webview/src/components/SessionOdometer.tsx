@@ -1,10 +1,14 @@
 import { useMemo, useState } from 'react';
 import { TimelineNode, formatDuration } from './TimelineCard';
 import { computeMetrics, formatCost, formatTokens } from '../metrics';
+import { AlertIcon, ClockIcon, PauseIcon, PlayIcon, SparkleIcon } from './Icons';
 
 export interface AnomalyStateUI {
   isAnomalous:     boolean;
-  type?:           'repeater' | 'error_thrash' | 'stall';
+  type?:           string;
+  severity?:       'high' | 'medium';
+  title?:          string;
+  description?:    string;
   reason?:         string;
   flaggedEventIds: string[];
 }
@@ -25,11 +29,16 @@ interface Props {
   chatAnswer?: string;
   chatLoading: boolean;
   onChat:      (question: string) => void;
+  /** Sidebar mode: one-line inline stats instead of the tile row. */
+  slim?: boolean;
+  /** Claude is blocked on the user (permission prompt / idle input). */
+  awaitingInput?: string;
 }
 
 export default function SessionOdometer({
   nodes, isLive, anomaly, anomalyCount = 0, paused = false,
   onPauseToggle, onRedirect, realTokens, aiSummary, chatAnswer, chatLoading, onChat,
+  slim = false, awaitingInput,
 }: Props) {
   const [question, setQuestion] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
@@ -69,69 +78,161 @@ export default function SessionOdometer({
           borderBottom: '1px solid rgba(248,81,73,0.35)',
           color: '#ffa198',
           fontSize: 11, fontWeight: 600,
+          animation: 'glitchIn 0.45s steps(3)',
         }}>
-          <span style={{ animation: 'pendingPulse 1.2s ease-in-out infinite' }}>⚠</span>
-          <span>{anomaly?.reason}</span>
+          <span style={{ animation: 'pendingPulse 1.2s ease-in-out infinite', display: 'flex' }}>
+            <AlertIcon size={13} />
+          </span>
+          <span>
+            {/* A loop is a glitch in the Matrix: you've seen this action before */}
+            {(anomaly?.type === 'repeater' || anomaly?.type === 'near_duplicate_loop') && (
+              <span style={{ fontStyle: 'italic' }}>Déjà vu — </span>
+            )}
+            {anomaly?.description ?? anomaly?.reason}
+          </span>
+        </div>
+      )}
+
+      {/* ── Waiting-for-you banner (permission prompt / idle input) ── */}
+      {!alarmed && awaitingInput && isLive && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 7,
+          padding: '6px 12px',
+          borderBottom: '1px solid rgba(210,153,34,0.3)',
+          background: 'rgba(210,153,34,0.06)',
+          color: '#d29922',
+          fontSize: 11, fontWeight: 600,
+        }}>
+          <span style={{ animation: 'pendingPulse 1.6s ease-in-out infinite', display: 'flex' }}>
+            <ClockIcon size={13} />
+          </span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {awaitingInput} — check your terminal
+          </span>
         </div>
       )}
 
       {/* ── Stat row ── */}
-      <div style={{ display: 'flex', alignItems: 'stretch', padding: '7px 12px', gap: 14, flexWrap: 'wrap' }}>
-        <Stat label="total time" value={formatDuration(m.totalDurationMs) ?? '—'} />
-        <Stat label="actions"    value={String(m.toolCount)} />
-        <Stat
-          label="errors"
-          value={String(m.errorCount)}
-          color={m.errorCount > 0 ? '#f85149' : undefined}
-        />
-        <Stat
-          label="anomalies"
-          value={String(anomalyCount)}
-          color={anomalyCount > 0 ? '#f85149' : undefined}
-        />
-        {/* Real tokens come from the transcript; ≈ marks heuristic fallbacks */}
-        <Stat
-          label={realTokens !== undefined ? 'tokens' : '≈ tokens'}
-          value={formatTokens(realTokens ?? m.estTokens)}
-          dim={realTokens === undefined}
-        />
-        <Stat
-          label="≈ cost"
-          value={formatCost(((realTokens ?? m.estTokens) / 1_000_000) * 6)}
-          dim
-        />
+      {slim ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px' }}>
+          <span style={{
+            fontSize: 10, color: 'var(--tb-text-muted)',
+            fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+            flex: 1, minWidth: 0,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {formatDuration(m.totalDurationMs) ?? '—'}
+            {' · '}{m.toolCount} actions
+            {m.errorCount   > 0 && <span style={{ color: '#f85149' }}> · {m.errorCount} err</span>}
+            {anomalyCount   > 0 && <span style={{ color: '#f85149' }}> · {anomalyCount} ⚠</span>}
+            {' · '}{formatTokens(realTokens ?? m.estTokens)} tok
+          </span>
+          {isLive && onPauseToggle && (
+            <button
+              onClick={onPauseToggle}
+              title={paused ? 'Resume — release the held tool call' : 'Bullet time — freeze the agent at its next tool call'}
+              style={{
+                background: paused ? 'rgba(210,153,34,0.15)' : 'none',
+                border: `1px solid ${paused ? 'rgba(210,153,34,0.6)' : 'var(--tb-border)'}`,
+                borderRadius: 3,
+                color: paused ? '#d29922' : 'var(--tb-text-muted)',
+                fontSize: 9.5, fontWeight: 600,
+                padding: '2px 7px', cursor: 'pointer',
+                flexShrink: 0,
+                display: 'flex', alignItems: 'center',
+              }}
+            >
+              {paused ? <PlayIcon size={10} /> : <PauseIcon size={10} />}
+            </button>
+          )}
+          <button
+            onClick={() => setChatOpen((v) => !v)}
+            title="Ask AI about this session"
+            style={{
+              background: chatOpen ? 'rgba(88,166,255,0.1)' : 'none',
+              border: `1px solid ${chatOpen ? 'rgba(88,166,255,0.4)' : 'var(--tb-border)'}`,
+              borderRadius: 3,
+              color: chatOpen ? 'var(--tb-blue)' : 'var(--tb-text-muted)',
+              fontSize: 9.5, padding: '2px 7px', cursor: 'pointer',
+              flexShrink: 0,
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}
+          >
+            <SparkleIcon size={10} /> AI
+          </button>
+        </div>
+      ) : (
+      <div style={{ display: 'flex', alignItems: 'center', padding: '7px 12px', gap: 0, flexWrap: 'wrap' }}>
+        <StatGroup>
+          <Stat label="time"    value={formatDuration(m.totalDurationMs) ?? '—'} />
+          <Stat label="actions" value={String(m.toolCount)} />
+        </StatGroup>
+
+        <StatDivider />
+
+        <StatGroup>
+          <Stat label="errors"    value={String(m.errorCount)}  color={m.errorCount  > 0 ? '#f85149' : undefined} />
+          <Stat label="anomalies" value={String(anomalyCount)}  color={anomalyCount  > 0 ? '#f85149' : undefined} />
+        </StatGroup>
+
+        <StatDivider />
+
+        <StatGroup>
+          <Stat
+            label={realTokens !== undefined ? 'tokens' : '≈ tokens'}
+            value={formatTokens(realTokens ?? m.estTokens)}
+            dim={realTokens === undefined}
+          />
+          {/* Only show cost when it's non-trivial */}
+          {(realTokens ?? m.estTokens) > 50_000 && (
+            <Stat
+              label="≈ cost"
+              value={formatCost(((realTokens ?? m.estTokens) / 1_000_000) * 6)}
+              dim
+            />
+          )}
+        </StatGroup>
+
         <div style={{ flex: 1 }} />
+
         {isLive && onPauseToggle && (
           <button
             onClick={onPauseToggle}
-            title={paused ? 'Resume — release the held tool call' : 'Pause — freeze the agent at its next tool call'}
+            title={paused ? 'Resume — release the held tool call' : 'Bullet time — freeze the agent at its next tool call'}
             style={{
               background: paused ? 'rgba(210,153,34,0.15)' : 'none',
               border: `1px solid ${paused ? 'rgba(210,153,34,0.6)' : 'var(--tb-border)'}`,
               borderRadius: 3,
               color: paused ? '#d29922' : 'var(--tb-text-muted)',
-              fontSize: 9.5, fontWeight: 600,
-              padding: '0 8px', cursor: 'pointer',
-              alignSelf: 'center', lineHeight: '18px',
+              fontSize: 10, fontWeight: 600,
+              padding: '3px 10px', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 5,
             }}
           >
-            {paused ? '▶ resume' : '⏸ pause'}
+            {paused ? <PlayIcon size={10} /> : <PauseIcon size={10} />}
+            <span>{paused ? 'Resume' : 'Pause'}</span>
           </button>
         )}
+
         <button
           onClick={() => setChatOpen((v) => !v)}
           style={{
-            background: 'none',
-            border: '1px solid var(--tb-border)',
+            display: 'flex', alignItems: 'center', gap: 5,
+            background: chatOpen ? 'rgba(88,166,255,0.1)' : 'none',
+            border: `1px solid ${chatOpen ? 'rgba(88,166,255,0.4)' : 'var(--tb-border)'}`,
             borderRadius: 3,
-            color: chatOpen ? 'var(--tb-text)' : 'var(--tb-text-muted)',
-            fontSize: 9.5, padding: '0 8px', cursor: 'pointer',
-            alignSelf: 'center', lineHeight: '18px',
+            color: chatOpen ? 'var(--tb-blue)' : 'var(--tb-text-muted)',
+            fontSize: 10, fontWeight: chatOpen ? 600 : 400,
+            padding: '3px 10px', cursor: 'pointer',
+            marginLeft: isLive && onPauseToggle ? 6 : 0,
+            transition: 'background 0.1s, border-color 0.1s, color 0.1s',
           }}
         >
-          ask AI {chatOpen ? '▴' : '▾'}
+          <SparkleIcon size={11} />
+          <span>Ask AI</span>
         </button>
       </div>
+      )}
 
       {/* ── Breakpoint banner + human-in-the-loop redirect ── */}
       {paused && (
@@ -145,15 +246,17 @@ export default function SessionOdometer({
             display: 'flex', alignItems: 'center', gap: 7,
             color: '#d29922', fontSize: 10.5, fontWeight: 600,
           }}>
-            <span style={{ animation: 'pendingPulse 1.4s ease-in-out infinite' }}>⏸</span>
-            <span>BREAKPOINT — agent freezes at its next tool call until you resume or redirect</span>
+            <span style={{ animation: 'pendingPulse 1.4s ease-in-out infinite', display: 'flex' }}>
+              <PauseIcon size={12} />
+            </span>
+            <span>BULLET TIME — agent frozen at its next tool call until you resume or redirect</span>
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
             <input
               value={redirect}
               onChange={(e) => setRedirect(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && sendRedirect()}
-              placeholder="💬 Redirect agent… e.g. 'stop installing that package, use the native lib'"
+              placeholder="Redirect the agent… e.g. 'stop installing that package, use the native lib'"
               style={{
                 flex: 1,
                 background: 'var(--tb-surface)',
@@ -187,19 +290,24 @@ export default function SessionOdometer({
       {aiSummary && (
         <div style={{
           padding: '0 12px 7px',
+          display: 'flex', alignItems: 'baseline', gap: 6,
           fontSize: 10.5, lineHeight: 1.45,
           color: 'var(--tb-text-muted)',
           fontStyle: 'italic',
-          wordBreak: 'break-word',
-          overflowWrap: 'anywhere',
         }}>
-          {isLive ? '◉ ' : ''}{stripMd(aiSummary)}
+          <SparkleIcon size={10} style={{ position: 'relative', top: 1, opacity: 0.6 }} />
+          <span style={{ minWidth: 0, wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+            {stripMd(aiSummary)}
+          </span>
         </div>
       )}
 
-      {/* ── Chat (preserves the Narrative Engine Q&A in the new layout) ── */}
+      {/* ── Chat ── */}
       {chatOpen && (
-        <div style={{ padding: '0 12px 9px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{
+          padding: '0 12px 9px', display: 'flex', flexDirection: 'column', gap: 6,
+          animation: 'chatPanelIn 0.15s ease-out',
+        }}>
           <div style={{ display: 'flex', gap: 6 }}>
             <input
               value={question}
@@ -331,5 +439,19 @@ function Stat({ label, value, color, dim }: {
         letterSpacing: '0.07em', textTransform: 'uppercase',
       }}>{label}</span>
     </div>
+  );
+}
+
+function StatGroup({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'stretch', gap: 14 }}>
+      {children}
+    </div>
+  );
+}
+
+function StatDivider() {
+  return (
+    <div style={{ width: 1, height: 28, background: 'var(--tb-border)', margin: '0 12px', flexShrink: 0 }} />
   );
 }

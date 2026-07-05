@@ -13,6 +13,7 @@ interface ClaudeSettings {
     PostToolUseFailure?: HookEntry[];
     Stop?: HookEntry[];
     Notification?: HookEntry[];
+    UserPromptSubmit?: HookEntry[];
   };
   [key: string]: unknown;
 }
@@ -78,6 +79,12 @@ export async function installHooks(port: number, outputChannel: vscode.OutputCha
     'PostToolUse',
     'PostToolUseFailure',
     'Stop',
+    // Fires when Claude waits on the user (permission prompts, idle input) —
+    // lets us distinguish "waiting for you" from a genuine stall.
+    'Notification',
+    // Carries the user's prompt text — makes sessions exportable as full
+    // conversations (prompt → actions → prompt), not just action logs.
+    'UserPromptSubmit',
   ];
 
   let changed = false;
@@ -135,6 +142,12 @@ export async function removeHooks(outputChannel: vscode.OutputChannel): Promise<
     'PostToolUse',
     'PostToolUseFailure',
     'Stop',
+    // Fires when Claude waits on the user (permission prompts, idle input) —
+    // lets us distinguish "waiting for you" from a genuine stall.
+    'Notification',
+    // Carries the user's prompt text — makes sessions exportable as full
+    // conversations (prompt → actions → prompt), not just action logs.
+    'UserPromptSubmit',
   ];
 
   let changed = false;

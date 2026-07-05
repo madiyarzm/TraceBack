@@ -1,8 +1,8 @@
 {
   "name": "traceback-ai",
   "displayName": "TraceBack \u2014 AI Agent Observability",
-  "description": "Live timeline, anomaly detection, breakpoints, and tripwires for AI coding agents. Watch, pause, and steer Claude Code sessions from your sidebar.",
-  "version": "0.1.1",
+  "description": "Live timeline, anomaly detection, breakpoints, and guards for AI coding agents. Watch, pause, and steer Claude Code sessions from your sidebar.",
+  "version": "0.2.0",
   "publisher": "madiyarzhunussov",
   "license": "MIT",
   "icon": "assets/icon.png",
@@ -130,29 +130,36 @@
           "default": 11434,
           "description": "Port Ollama is listening on (default 11434)."
         },
-        "traceback.tripwires": {
+        "traceback.guards": {
+          "type": "object",
+          "default": {},
+          "description": "Built-in guard toggles. An enabled guard auto-denies matching agent tool calls before they execute.",
+          "properties": {
+            "never_delete": {
+              "type": "boolean",
+              "description": "Block any rm command or DeleteFile call."
+            },
+            "stay_in_project": {
+              "type": "boolean",
+              "description": "Block edits/writes to paths outside the session working directory."
+            },
+            "protect_secrets": {
+              "type": "boolean",
+              "description": "Block reads/edits of .env, .secret, and secrets/ paths."
+            },
+            "no_push_main": {
+              "type": "boolean",
+              "description": "Block bash commands that push to the main branch."
+            }
+          },
+          "additionalProperties": false
+        },
+        "traceback.customGuards": {
           "type": "array",
           "default": [],
-          "description": "Policy rules that block matching agent tool calls before they execute, across all sessions.",
+          "description": "Custom guard regexes (case-insensitive), matched against the full tool call string (tool name + arguments). A match auto-denies the call.",
           "items": {
-            "type": "object",
-            "required": [
-              "pattern"
-            ],
-            "properties": {
-              "tool": {
-                "type": "string",
-                "description": "Regex matched against the tool name (e.g. \"Bash\", \"Edit|Write\"). Omit to match any tool."
-              },
-              "pattern": {
-                "type": "string",
-                "description": "Regex (case-insensitive) matched against the tool name + its input JSON. A match blocks the call."
-              },
-              "reason": {
-                "type": "string",
-                "description": "Message fed back to the agent explaining why the call was blocked."
-              }
-            }
+            "type": "string"
           }
         }
       }

@@ -1,3 +1,7 @@
+import { useState } from 'react';
+import { AlertIcon } from './Icons';
+import { codename } from '../codename';
+
 export interface SessionSummary {
   id:         string;
   label:      string;
@@ -8,108 +12,127 @@ export interface SessionSummary {
 }
 
 interface Props {
-  sessions: SessionSummary[];
-  /** Session currently shown. */
+  sessions:  SessionSummary[];
   displayId: string | null;
-  /** Explicit user pin; null = following the most recently updated session. */
-  pinnedId: string | null;
-  onSelect: (id: string | null) => void;
+  pinnedId:  string | null;
+  onSelect:  (id: string | null) => void;
 }
 
-function badge(s: SessionSummary): string {
-  if (s.anomalous) return '🔴';
-  if (!s.stopped)  return '🟢';
-  return '⚪';
+interface PillProps {
+  label:     string;
+  active:    boolean;
+  live:      boolean;
+  anomalous: boolean;
+  count:     number | null;
+  onClick:   () => void;
+  isAuto?:   boolean;
 }
 
-/**
- * Fleet selector: one entry per agent session, labeled by working directory,
- * with a live status badge. Anomalies in sessions that are NOT currently
- * displayed also surface as a red alert pill next to the dropdown, so a
- * background failure is visible without opening the menu.
- */
+function SessionPill({ label, active, live, anomalous, count, onClick, isAuto }: PillProps) {
+  const [hovered, setHovered] = useState(false);
+
+  const activeBorder  = anomalous ? 'rgba(248,81,73,0.6)' : live ? 'rgba(63,185,80,0.45)' : 'var(--tb-border-2)';
+  const activeBg      = anomalous ? 'rgba(248,81,73,0.1)' : live ? 'rgba(63,185,80,0.07)' : 'var(--tb-surface-2)';
+
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      title={label}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        padding: '3px 9px',
+        borderRadius: 4,
+        border: `1px solid ${active ? activeBorder : hovered ? 'var(--tb-border-2)' : 'var(--tb-border)'}`,
+        background: active ? activeBg : hovered ? 'var(--tb-surface-2)' : 'transparent',
+        color: active ? 'var(--tb-text)' : 'var(--tb-text-muted)',
+        cursor: 'pointer',
+        flexShrink: 0,
+        fontFamily: 'var(--tb-ui-font)',
+        fontSize: 10,
+        fontWeight: active ? 600 : 400,
+        transition: 'background 0.1s, border-color 0.1s, color 0.1s',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {isAuto ? (
+        <span style={{ fontSize: 9, opacity: 0.7 }}>⟲</span>
+      ) : (
+        <div
+          className={live && !anomalous ? 'live-dot' : anomalous ? '' : ''}
+          style={{
+            width: 5, height: 5, borderRadius: '50%', flexShrink: 0,
+            background: anomalous ? '#f85149' : live ? '#3fb950' : 'var(--tb-text-dim)',
+            ...(anomalous ? { animation: 'pendingPulse 1.2s ease-in-out infinite' } : {}),
+          }}
+        />
+      )}
+
+      <span style={{ maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        {label}
+      </span>
+
+      {count !== null && (
+        <span style={{
+          fontSize: 8.5,
+          color: active ? 'var(--tb-text-muted)' : 'var(--tb-text-dim)',
+          fontWeight: 400,
+        }}>
+          {count}
+        </span>
+      )}
+
+      {anomalous && (
+        <span style={{ color: '#f85149', display: 'flex' }}><AlertIcon size={9} /></span>
+      )}
+    </button>
+  );
+}
+
 export default function SessionPicker({ sessions, displayId, pinnedId, onSelect }: Props) {
   if (sessions.length === 0) return null;
-
-  const backgroundAnomalous = sessions.filter(
-    (s) => s.anomalous && s.id !== displayId
-  );
 
   return (
     <div style={{
       display: 'flex',
       alignItems: 'center',
-      gap: 8,
-      padding: '0 10px',
-      height: 30,
+      gap: 5,
+      padding: '5px 10px',
       borderBottom: '1px solid var(--tb-border)',
       background: 'var(--tb-surface)',
       fontFamily: 'var(--tb-ui-font)',
       flexShrink: 0,
-      position: 'sticky',
-      top: 0,
-      zIndex: 30,
-    }}>
-      <span style={{
-        fontSize: 9,
-        letterSpacing: '0.15em',
-        textTransform: 'uppercase',
-        color: 'var(--tb-text-muted)',
-        flexShrink: 0,
-      }}>
-        AGENTS · {sessions.length}
-      </span>
+      overflowX: 'auto',
+      // hide scrollbar but keep scrollable
+      scrollbarWidth: 'none',
+      msOverflowStyle: 'none',
+    } as React.CSSProperties}>
+      <SessionPill
+        label="auto"
+        active={pinnedId === null}
+        live={false}
+        anomalous={false}
+        count={null}
+        onClick={() => onSelect(null)}
+        isAuto
+      />
 
-      <div style={{ width: 1, height: 12, background: 'var(--tb-border)', flexShrink: 0 }} />
+      <div style={{ width: 1, height: 14, background: 'var(--tb-border)', flexShrink: 0, margin: '0 2px' }} />
 
-      <select
-        value={pinnedId ?? ''}
-        onChange={(e) => onSelect(e.target.value || null)}
-        style={{
-          flex: 1,
-          fontSize: 10,
-          fontFamily: 'var(--tb-ui-font)',
-          letterSpacing: '0.04em',
-          background: 'transparent',
-          color: 'var(--tb-text)',
-          border: 'none',
-          outline: 'none',
-          cursor: 'pointer',
-        }}
-      >
-        <option value="" style={{ background: 'var(--tb-surface)' }}>
-          ⟲ auto — follow latest activity
-        </option>
-        {sessions.map((s) => (
-          <option
-            key={s.id}
-            value={s.id}
-            style={{ background: 'var(--tb-surface)', color: 'var(--tb-text)' }}
-          >
-            {badge(s)} {s.label} · {s.nodeCount} actions{s.stopped ? '' : ' · LIVE'}
-          </option>
-        ))}
-      </select>
-
-      {backgroundAnomalous.length > 0 && (
-        <span
-          onClick={() => onSelect(backgroundAnomalous[0].id)}
-          title={`Jump to ${backgroundAnomalous[0].label}`}
-          style={{
-            flexShrink: 0,
-            fontSize: 9,
-            fontWeight: 700,
-            color: '#ffa198',
-            background: 'rgba(248,81,73,0.18)',
-            border: '1px solid rgba(248,81,73,0.5)',
-            borderRadius: 3,
-            padding: '1px 6px',
-            cursor: 'pointer',
-            animation: 'pendingPulse 1.2s ease-in-out infinite',
-          }}>
-          ⚠ {backgroundAnomalous.length}
-        </span>
-      )}
+      {sessions.map((s) => (
+        <SessionPill
+          key={s.id}
+          label={`${codename(s.id)} · ${s.label}`}
+          active={s.id === displayId}
+          live={!s.stopped}
+          anomalous={!!s.anomalous}
+          count={s.nodeCount}
+          onClick={() => onSelect(s.id)}
+        />
+      ))}
     </div>
   );
 }

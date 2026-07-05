@@ -1,10 +1,12 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { startServer, stopServer } from './server';
 import { installHooks, removeHooks } from './hookManager';
-import { traceStore } from './traceStore';
+import { traceStore, TraceSession } from './traceStore';
 import { TracebackWebviewProvider } from './webviewProvider';
 import { callLLM, LLMConfig } from './llmClient';
 import { loadEnvFromAllKnownLocations } from './envLoader';
+import { saveSession } from './sessionArchive';
 
 let outputChannel: vscode.OutputChannel;
 
@@ -87,7 +89,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     await installHooks(port, outputChannel);
   }
 
-  const provider = new TracebackWebviewProvider(context.extensionUri, outputChannel);
+  const archiveDir = path.join(context.globalStorageUri.fsPath, 'sessions');
+
+  const provider = new TracebackWebviewProvider(context.extensionUri, outputChannel, archiveDir);
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider('traceback.mapView', provider, {
       webviewOptions: { retainContextWhenHidden: true },
@@ -100,22 +104,47 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   let summaryTimer: ReturnType<typeof setTimeout> | null = null;
   let lastSummarySig = '';
 
+  // Debounced disk archive: at most one write per session per 2s while live;
+  // a Stop event flushes immediately so finished sessions are never lost.
+  const archiveTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  function archive(session: TraceSession): void {
+    try {
+      saveSession(archiveDir, session);
+    } catch (err) {
+      outputChannel.appendLine(`[TraceBack] Archive write failed: ${err}`);
+    }
+  }
+
   context.subscriptions.push(
     traceStore.onDidUpdate((session) => {
       provider.postSessionUpdate(session);
+
+      const pendingSave = archiveTimers.get(session.id);
+      if (pendingSave) clearTimeout(pendingSave);
+      if (session.stopped) {
+        archiveTimers.delete(session.id);
+        archive(session);
+      } else {
+        archiveTimers.set(session.id, setTimeout(() => {
+          archiveTimers.delete(session.id);
+          archive(session);
+        }, 2000));
+      }
 
       if (summaryTimer) clearTimeout(summaryTimer);
       summaryTimer = setTimeout(async () => {
         const cfg = getLLMConfig();
         if (!cfg) return;
         const realNodes = session.nodes.filter((n) => n.toolName !== '__thinking__');
-        if (realNodes.length === 0) return;
+        if (realNodes.filter((n) => n.toolName !== '__prompt__').length === 0) return;
 
         const sig = `${session.id}|${realNodes.length}|${realNodes[realNodes.length - 1]?.status}|${session.stopped}`;
         if (sig === lastSummarySig) return;
 
         const nodeLines = realNodes
-          .map((n) => `${n.toolName}: ${n.label} [${n.status}]`)
+          .map((n) => n.toolName === '__prompt__'
+            ? `USER PROMPT: "${n.label}"`
+            : `${n.toolName}: ${n.label} [${n.status}]`)
           .join('\n');
         try {
           const summary = await callLLM(cfg, SUMMARY_SYSTEM, `Agent actions:\n${nodeLines}`, 90);

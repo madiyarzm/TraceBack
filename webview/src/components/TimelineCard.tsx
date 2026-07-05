@@ -1,6 +1,8 @@
-import { memo, useState } from 'react';
+import { memo, useRef, useState } from 'react';
 import DiffViewer from './DiffViewer';
 import { parseToolPayload, formatBytes, summarizeOutput, copyText } from '../payloadParser';
+import { AlertIcon, CheckIcon, ChevronIcon, CopyIcon, FileIcon, ListChecksIcon, PencilIcon } from './Icons';
+import ScrambleText from './ScrambleText';
 
 export type NodeStatus = 'pending' | 'success' | 'error' | 'thinking';
 
@@ -9,6 +11,8 @@ export interface TimelineBatchItem {
   detail?:     string;
   status:      NodeStatus;
   durationMs?: number;
+  toolInput?:  Record<string, unknown>;
+  intent?:     string;
 }
 
 export interface TimelineNode {
@@ -24,6 +28,13 @@ export interface TimelineNode {
   durationMs?: number;
   isBatch?:    boolean;
   batchItems?: TimelineBatchItem[];
+  /** In-progress plan item this call ran under. */
+  objective?:  string;
+  /** TodoWrite call — rendered as a quiet "plan updated" divider. */
+  isPlanUpdate?: boolean;
+  /** Why the agent made this call — first sentence of the assistant text
+   *  preceding it in the transcript. Optional everywhere; may arrive late. */
+  intent?:     string;
 }
 
 export const STATUS_COLOR: Record<NodeStatus, string> = {
@@ -65,18 +76,97 @@ interface Props {
 }
 
 function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Props) {
+  const [hovered, setHovered] = useState(false);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function handleMouseEnter() {
+    hoverTimer.current = setTimeout(() => setHovered(true), 30);
+  }
+  function handleMouseLeave() {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    setHovered(false);
+  }
+
+  // User prompts render as a distinct "speech" block — the conversation's
+  // structure (prompt → actions → prompt) is what makes exports shareable.
+  if (node.toolName === '__prompt__') {
+    return (
+      <div
+        onClick={() => onToggle(node.id)}
+        style={{
+          margin: '6px 0 4px 26px',
+          padding: '7px 12px',
+          borderRadius: 6,
+          background: 'rgba(88,166,255,0.07)',
+          border: '1px solid rgba(88,166,255,0.25)',
+          borderLeft: '3px solid var(--tb-blue)',
+          cursor: 'pointer',
+          fontFamily: 'var(--tb-ui-font)',
+        }}
+      >
+        <div style={{
+          fontSize: 8.5, fontWeight: 700,
+          letterSpacing: '0.1em', textTransform: 'uppercase',
+          color: 'var(--tb-blue)',
+          marginBottom: 3,
+        }}>
+          You
+        </div>
+        <div style={{
+          fontSize: 11.5, lineHeight: 1.5,
+          color: 'var(--tb-text)',
+          ...(expanded ? { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } : {
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }),
+        }}>
+          {expanded ? (node.detail ?? node.label) : node.label}
+        </div>
+      </div>
+    );
+  }
+
+  // TodoWrite rows render as a quiet "plan updated" divider — the plan itself
+  // lives in the ObjectiveHeader, so a full card here would be noise.
+  if (node.isPlanUpdate) {
+    const input = node.toolInput ?? {};
+    let text = 'plan updated';
+    if (node.toolName === 'TaskCreate' && typeof input.subject === 'string') {
+      text = `task added — ${input.subject}`;
+    } else if (node.toolName === 'TaskUpdate') {
+      text = typeof input.status === 'string'
+        ? `task ${String(input.status).replace('_', ' ')}`
+        : 'task updated';
+    } else if (Array.isArray(input.todos)) {
+      const n = (input.todos as unknown[]).length;
+      text = `plan updated — ${n} task${n === 1 ? '' : 's'}`;
+    }
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 7,
+        padding: '3px 0 3px 26px',
+        color: 'var(--tb-text-dim)',
+        fontSize: 9.5, fontFamily: 'var(--tb-ui-font)',
+        userSelect: 'none',
+      }}>
+        <ListChecksIcon size={10} />
+        <span style={{
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>{text}</span>
+      </div>
+    );
+  }
+
   // "Thinking" rows render as a quiet divider, not a card
   if (node.toolName === '__thinking__') {
     return (
       <div style={{
         display: 'flex', alignItems: 'center', gap: 8,
         padding: '2px 0 2px 26px',
-        color: 'rgba(88,166,255,0.55)',
-        fontSize: 10, fontFamily: 'var(--tb-ui-font)',
+        color: 'rgba(88,166,255,0.35)',
+        fontSize: 9.5, fontFamily: 'var(--tb-ui-font)',
         userSelect: 'none',
       }}>
-        <span style={{ letterSpacing: 2 }}>· · ·</span>
-        <span>thinking</span>
+        <span style={{ letterSpacing: 3 }}>· · ·</span>
       </div>
     );
   }
@@ -87,7 +177,11 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
   const isError  = node.status === 'error';
 
   return (
-    <div style={{ display: 'flex', gap: 10, position: 'relative' }}>
+    <div
+      style={{ display: 'flex', gap: 10, position: 'relative' }}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       {/* Timeline dot, sitting on the vertical line drawn by the parent */}
       <div style={{
         width: 9, height: 9, borderRadius: '50%',
@@ -106,16 +200,20 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
         style={{
           flex: 1,
           minWidth: 0,
-          background: isError ? 'rgba(248,81,73,0.06)' : 'var(--tb-surface)',
+          background: isError
+            ? (hovered ? 'rgba(248,81,73,0.1)' : 'rgba(248,81,73,0.06)')
+            : hovered ? 'var(--tb-surface-2)' : 'var(--tb-surface)',
           border: `1px solid ${
             flagged ? 'rgba(248,81,73,0.7)'
             : isError ? 'rgba(248,81,73,0.45)'
+            : hovered ? 'var(--tb-border-2)'
             : 'var(--tb-border)'
           }`,
           borderLeft: `3px solid ${flagged ? '#f85149' : color}`,
           borderRadius: 4,
           cursor: 'pointer',
           fontFamily: 'var(--tb-ui-font)',
+          transition: 'background 0.12s, border-color 0.12s',
           ...(flagged ? {
             boxShadow: '0 0 10px rgba(248,81,73,0.35)',
             animation: 'stumbleHalo 1.2s ease-in-out infinite',
@@ -132,7 +230,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
             color: flagged ? '#ffa198' : '#d29922',
             fontSize: 9.5, fontWeight: 600,
           }}>
-            <span>⚠</span>
+            <AlertIcon size={11} />
             <span style={{
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>
@@ -159,7 +257,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
             color: isError ? '#ffa198' : 'var(--tb-text)',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
-            {node.isBatch ? `${node.count} steps` : node.label}
+            <ScrambleText text={node.isBatch ? `${node.count} steps` : node.label} />
           </span>
 
           {node.count > 1 && !node.isBatch && (
@@ -189,11 +287,28 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
           )}
 
           <span style={{
-            fontSize: 8, color: 'var(--tb-text-dim)', flexShrink: 0,
+            color: 'var(--tb-text-dim)', flexShrink: 0,
+            display: 'flex',
             transform: expanded ? 'rotate(180deg)' : 'none',
             transition: 'transform 0.15s',
-          }}>▼</span>
+          }}>
+            <ChevronIcon size={11} />
+          </span>
         </div>
+
+        {/* ── Intent subtitle: why the agent made this call ── */}
+        {node.intent && !node.isBatch && (
+          <div style={{
+            padding: '0 10px 6px 28px',
+            fontSize: 10.5, lineHeight: 1.4,
+            color: 'var(--tb-text-muted)',
+            overflow: 'hidden', textOverflow: 'ellipsis',
+            display: '-webkit-box',
+            WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+          }}>
+            {node.intent}
+          </div>
+        )}
 
         {/* ── Expanded accordion body ── */}
         {expanded && (
@@ -204,6 +319,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, onToggle }: Prop
               padding: '8px 10px',
               display: 'flex', flexDirection: 'column', gap: 8,
               cursor: 'default',
+              animation: 'cardBodyIn 0.15s ease-out',
             }}
           >
             {node.isBatch && node.batchItems && (
@@ -296,14 +412,14 @@ function CuratedBody({ node }: { node: TimelineNode }) {
 
       {/* ── File read: path + size metrics, contents masked ── */}
       {parsed.kind === 'file-read' && (
-        <FileRow icon="📄" path={parsed.filePath} verb="read"
+        <FileRow icon={<FileIcon size={11} />} path={parsed.filePath} verb="read"
                  lines={parsed.lines} bytes={parsed.bytes} />
       )}
 
       {/* ── File write/edit: metrics + the diff (the curated view for mods) ── */}
       {parsed.kind === 'file-write' && (
         <>
-          <FileRow icon="✎" path={parsed.filePath} verb="written"
+          <FileRow icon={<PencilIcon size={11} />} path={parsed.filePath} verb="written"
                    lines={parsed.lines} bytes={parsed.bytes} />
           {renderDiff(node)}
         </>
@@ -341,7 +457,7 @@ function CuratedBody({ node }: { node: TimelineNode }) {
                 cursor: 'pointer',
               }}
             >
-              📄 {showRaw ? 'hide' : 'view'} raw log output
+              {showRaw ? 'hide' : 'view'} raw output
             </button>
             <CopyBtn getText={() => rawText(node)} title="copy raw input/output" label="copy" />
           </div>
@@ -405,9 +521,12 @@ function CopyBtn({ getText, title, label }: {
         padding: '2px 7px',
         cursor: 'pointer',
         flexShrink: 0,
+        display: 'flex', alignItems: 'center', gap: 4,
       }}
     >
-      {copied ? '✓' : (label ?? '⧉')}
+      {copied
+        ? <CheckIcon size={10} />
+        : <>{label ? <>{label}</> : null}<CopyIcon size={10} /></>}
     </button>
   );
 }
@@ -440,7 +559,7 @@ function renderDiff(node: TimelineNode) {
 }
 
 function FileRow({ icon, path, verb, lines, bytes }: {
-  icon: string; path?: string; verb: string; lines?: number; bytes?: number;
+  icon: React.ReactNode; path?: string; verb: string; lines?: number; bytes?: number;
 }) {
   const metrics = [
     lines !== undefined ? `${lines} lines` : null,
@@ -454,7 +573,7 @@ function FileRow({ icon, path, verb, lines, bytes }: {
       border: '1px solid var(--tb-border)',
       borderRadius: 4, padding: '5px 10px',
     }}>
-      <span style={{ fontSize: 11, flexShrink: 0 }}>{icon}</span>
+      <span style={{ flexShrink: 0, display: 'flex', color: 'var(--tb-text-muted)' }}>{icon}</span>
       <span style={{
         fontSize: 10.5,
         fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
