@@ -33,6 +33,12 @@ export interface GuardsStateUI {
   custom:   string[];
 }
 
+export interface LedgerItemUI {
+  text:      string;
+  kind:      'decision' | 'assumption';
+  timestamp: number;
+}
+
 export interface FullSessionData extends SessionSummary {
   nodes:           TimelineNode[];
   anomaly?:        AnomalyStateUI;
@@ -43,6 +49,16 @@ export interface FullSessionData extends SessionSummary {
   paused?:         boolean;
   awaitingInput?:  string;
   plan?:           SessionPlanUI;
+  ledger?:         LedgerItemUI[];
+}
+
+/** One file in the net-change review: pre-session baseline vs. disk now. */
+export interface ReviewFile {
+  path:     string;
+  /** Content before the agent's first touch; null = file was created. */
+  baseline: string | null;
+  /** Content on disk at review time; null = file was deleted. */
+  current:  string | null;
 }
 
 export interface ArchivedMeta {
@@ -106,7 +122,7 @@ export function buildSessionReport(s: FullSessionData): string {
         const d    = formatDuration(n.durationMs);
         lines.push(`${step}. ${icon} **${n.toolName}** — ${n.isBatch ? `${n.count} steps` : n.label}${d ? ` _(${d})_` : ''}`);
         if (n.intent) lines.push(`   - _${n.intent}_`);
-        const outcome = summarizeOutput(n.detail, n.status === 'error');
+        const outcome = summarizeOutput(n.detail, n.status === 'error', n);
         if (outcome) lines.push(`   - ${outcome}`);
         if (n.isBatch && n.batchItems) {
           for (const item of n.batchItems) lines.push(`   - ${item.status === 'error' ? '❌' : '·'} ${item.label}`);
@@ -149,6 +165,7 @@ export function useSessionFeed() {
   const [chatAnswer, setChatAnswer]   = useState<string | undefined>(undefined);
   const [chatLoading, setChatLoading] = useState(false);
   const [guards, setGuards]           = useState<GuardsStateUI>({ builtins: [], custom: [] });
+  const [reviewFiles, setReviewFiles] = useState<ReviewFile[] | null>(null);
 
   const timelineRef = useRef<HTMLDivElement>(null);
   const scrollRef   = useRef<HTMLDivElement>(null);
@@ -182,6 +199,11 @@ export function useSessionFeed() {
         const s = message.session as FullSessionData & { stopped?: boolean };
         setArchived({ ...s, stopped: true });
         setExpandedId(null);
+        return;
+      }
+
+      if (message.type === 'review_data') {
+        setReviewFiles((message.files as ReviewFile[]) ?? []);
         return;
       }
 
@@ -226,7 +248,15 @@ export function useSessionFeed() {
     setArchived(null);
     setPinnedId(id);
     setExpandedId(null);
+    setReviewFiles(null);
     followRef.current = true;
+  }
+
+  /** Ask the extension host for baseline-vs-now contents of every touched file. */
+  function requestReview() {
+    if (!display || archived) return;
+    setReviewFiles(null); // stale data out — the panel shows a loading state
+    vscode.postMessage({ type: 'request_review', sessionId: display.id });
   }
 
   function selectArchived(id: string) {
@@ -324,6 +354,7 @@ export function useSessionFeed() {
     expandedId, setExpandedId,
     chatAnswer, chatLoading,
     guards, setGuard, addGuard, removeGuard,
+    reviewFiles, requestReview,
     timelineRef, scrollRef,
     handleScroll, selectSession, selectArchived, chat,
     exportPng, exportJson, exportHtml, copyReport,

@@ -121,7 +121,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
         }}
       >
         <div style={{
-          fontSize: 8.5, fontWeight: 700,
+          fontSize: 9.5, fontWeight: 700,
           letterSpacing: '0.1em', textTransform: 'uppercase',
           color: 'var(--tb-blue)',
           marginBottom: 3,
@@ -129,7 +129,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
           You
         </div>
         <div style={{
-          fontSize: 11.5, lineHeight: 1.5,
+          fontSize: 12.5, lineHeight: 1.5,
           color: 'var(--tb-text)',
           ...(expanded ? { whiteSpace: 'pre-wrap', wordBreak: 'break-word' } : {
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -161,7 +161,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
         display: 'flex', alignItems: 'center', gap: 7,
         padding: '3px 0 3px 26px',
         color: 'var(--tb-text-dim)',
-        fontSize: 9.5, fontFamily: 'var(--tb-ui-font)',
+        fontSize: 10.5, fontFamily: 'var(--tb-ui-font)',
         userSelect: 'none',
       }}>
         <ListChecksIcon size={10} />
@@ -179,7 +179,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
         display: 'flex', alignItems: 'center', gap: 8,
         padding: '2px 0 2px 26px',
         color: 'rgba(88,166,255,0.35)',
-        fontSize: 9.5, fontFamily: 'var(--tb-ui-font)',
+        fontSize: 10.5, fontFamily: 'var(--tb-ui-font)',
         userSelect: 'none',
       }}>
         <span style={{ letterSpacing: 3 }}>· · ·</span>
@@ -247,7 +247,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
             borderBottom: '1px solid rgba(210,153,34,0.3)',
             background: flagged ? 'rgba(248,81,73,0.12)' : 'rgba(210,153,34,0.08)',
             color: flagged ? '#ffa198' : '#d29922',
-            fontSize: 9.5, fontWeight: 600,
+            fontSize: 10.5, fontWeight: 600,
           }}>
             <AlertIcon size={11} />
             <span style={{
@@ -265,18 +265,18 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
         }}>
           <span style={{
             display: 'inline-flex', alignItems: 'center', gap: 4, flexShrink: 0,
-            fontSize: 9.5, fontWeight: 700,
+            fontSize: 10.5, fontWeight: 700,
             letterSpacing: '0.04em', textTransform: 'uppercase',
             color: tcolor,
             background: `${tcolor}1f`,
             border: `1px solid ${tcolor}3d`,
             borderRadius: 4, padding: '2px 7px',
           }}>
-            <span style={{ fontSize: 10 }}>{icon}</span>
+            <span style={{ fontSize: 11 }}>{icon}</span>
             {node.toolName}
           </span>
           <span style={{
-            fontSize: 11.5, flex: 1, minWidth: 0,
+            fontSize: 12.5, flex: 1, minWidth: 0,
             color: isError ? '#ffa198' : 'var(--tb-text)',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
@@ -285,7 +285,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
 
           {node.count > 1 && !node.isBatch && (
             <span style={{
-              fontSize: 9, fontWeight: 600, flexShrink: 0,
+              fontSize: 10, fontWeight: 600, flexShrink: 0,
               color: 'var(--tb-text-muted)',
               background: 'var(--tb-surface-2)',
               border: '1px solid var(--tb-border)',
@@ -294,7 +294,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
           )}
           {node.isBatch && (
             <span style={{
-              fontSize: 9, fontWeight: 600, flexShrink: 0,
+              fontSize: 10, fontWeight: 600, flexShrink: 0,
               color, background: `${color}18`,
               border: `1px solid ${color}30`,
               borderRadius: 3, padding: '0 5px', lineHeight: '14px',
@@ -303,7 +303,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
 
           {duration && (
             <span style={{
-              fontSize: 9.5, flexShrink: 0,
+              fontSize: 10.5, flexShrink: 0,
               fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
               color: (node.durationMs ?? 0) > 10_000 ? '#d29922' : 'var(--tb-text-muted)',
             }}>{duration}</span>
@@ -323,7 +323,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
         {node.intent && !node.isBatch && (
           <div style={{
             padding: '0 10px 6px 28px',
-            fontSize: 10.5, lineHeight: 1.4,
+            fontSize: 11.5, lineHeight: 1.4,
             color: 'var(--tb-text-muted)',
             overflow: 'hidden', textOverflow: 'ellipsis',
             display: '-webkit-box',
@@ -357,12 +357,12 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
                       background: STATUS_COLOR[item.status], flexShrink: 0,
                     }} />
                     <span style={{
-                      fontSize: 11, color: 'var(--tb-text)', flex: 1, minWidth: 0,
+                      fontSize: 12, color: 'var(--tb-text)', flex: 1, minWidth: 0,
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                     }}>{item.label}</span>
                     {formatDuration(item.durationMs) && (
                       <span style={{
-                        fontSize: 9, color: 'var(--tb-text-muted)',
+                        fontSize: 10, color: 'var(--tb-text-muted)',
                         fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
                       }}>{formatDuration(item.durationMs)}</span>
                     )}
@@ -402,7 +402,7 @@ function CuratedBody({ node }: { node: TimelineNode }) {
         }}>
           <span style={{
             fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
-            fontSize: 10.5, color: '#c9d1d9',
+            fontSize: 11.5, color: '#c9d1d9',
             flex: 1, minWidth: 0,
             wordBreak: 'break-all',
           }}>
@@ -418,12 +418,12 @@ function CuratedBody({ node }: { node: TimelineNode }) {
 
       {/* ── Outcome: deterministic one-line "what happened" ── */}
       {(() => {
-        const outcome = summarizeOutput(node.detail, isError);
+        const outcome = summarizeOutput(node.detail, isError, node);
         if (!outcome) return null;
         return (
           <div style={{
             display: 'flex', alignItems: 'baseline', gap: 6,
-            fontSize: 10.5, lineHeight: 1.45,
+            fontSize: 11.5, lineHeight: 1.45,
             color: isError ? '#ffa198' : 'var(--tb-text)',
             wordBreak: 'break-word',
           }}>
@@ -458,7 +458,7 @@ function CuratedBody({ node }: { node: TimelineNode }) {
       )}
 
       {parsed.kind === 'generic' && !hasRaw && (
-        <span style={{ fontSize: 10.5, color: 'var(--tb-text-dim)' }}>
+        <span style={{ fontSize: 11.5, color: 'var(--tb-text-dim)' }}>
           no recorded input/output for this step
         </span>
       )}
@@ -474,7 +474,7 @@ function CuratedBody({ node }: { node: TimelineNode }) {
                 border: '1px solid var(--tb-border)',
                 borderRadius: 3,
                 color: 'var(--tb-text-muted)',
-                fontSize: 9.5,
+                fontSize: 10.5,
                 fontFamily: 'var(--tb-ui-font)',
                 padding: '2px 8px',
                 cursor: 'pointer',
@@ -493,7 +493,7 @@ function CuratedBody({ node }: { node: TimelineNode }) {
               borderRadius: 4,
               padding: 8,
               fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
-              fontSize: 10,
+              fontSize: 11,
               lineHeight: 1.5,
               color: '#7ee787',
               whiteSpace: 'pre-wrap',
@@ -539,7 +539,7 @@ function CopyBtn({ getText, title, label }: {
         border: '1px solid var(--tb-border)',
         borderRadius: 3,
         color: copied ? '#3fb950' : 'var(--tb-text-muted)',
-        fontSize: 9.5,
+        fontSize: 10.5,
         fontFamily: 'var(--tb-ui-font)',
         padding: '2px 7px',
         cursor: 'pointer',
@@ -598,7 +598,7 @@ function FileRow({ icon, path, verb, lines, bytes }: {
     }}>
       <span style={{ flexShrink: 0, display: 'flex', color: 'var(--tb-text-muted)' }}>{icon}</span>
       <span style={{
-        fontSize: 10.5,
+        fontSize: 11.5,
         fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
         color: 'var(--tb-text)',
         flex: 1, minWidth: 0,
@@ -608,7 +608,7 @@ function FileRow({ icon, path, verb, lines, bytes }: {
         {path ?? 'unknown file'}
       </span>
       {metrics && (
-        <span style={{ fontSize: 9.5, color: 'var(--tb-text-muted)', flexShrink: 0 }}>
+        <span style={{ fontSize: 10.5, color: 'var(--tb-text-muted)', flexShrink: 0 }}>
           {metrics} {verb}
         </span>
       )}
@@ -620,7 +620,7 @@ function Pill({ color, children }: { color: string; children: React.ReactNode })
   return (
     <span style={{
       flexShrink: 0,
-      fontSize: 9, fontWeight: 600,
+      fontSize: 10, fontWeight: 600,
       color,
       background: `${color}18`,
       border: `1px solid ${color}40`,
@@ -636,7 +636,7 @@ function Pill({ color, children }: { color: string; children: React.ReactNode })
 function Chip({ children }: { children: React.ReactNode }) {
   return (
     <span style={{
-      fontSize: 10,
+      fontSize: 11,
       color: 'var(--tb-text)',
       background: 'var(--tb-surface-2)',
       border: '1px solid var(--tb-border)',
@@ -653,7 +653,7 @@ function Chip({ children }: { children: React.ReactNode }) {
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
-      fontSize: 9, fontWeight: 600,
+      fontSize: 10, fontWeight: 600,
       color: 'var(--tb-text-dim)',
       letterSpacing: '0.08em', textTransform: 'uppercase',
       marginBottom: 4,

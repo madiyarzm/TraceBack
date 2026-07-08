@@ -68,17 +68,17 @@ function PromptRow({ chapter, selected, badge, onClick }: {
       onMouseLeave={() => setHovered(false)}
       style={{
         padding: '11px 13px',
-        borderRadius: 9,
-        border: `1px solid ${selected ? 'var(--tb-border-2)' : 'transparent'}`,
-        background: selected ? 'transparent' : hovered ? 'rgba(22,27,34,0.4)' : 'transparent',
+        borderRadius: 8,
+        background: selected ? 'var(--tb-surface-2)' : hovered ? 'rgba(22,27,34,0.45)' : 'transparent',
+        boxShadow: selected ? 'inset 2.5px 0 0 var(--tb-blue)' : 'none',
         cursor: 'pointer',
-        transition: 'background 0.1s, border-color 0.1s',
+        transition: 'background 0.12s ease, box-shadow 0.12s ease',
         fontFamily: 'var(--tb-ui-font)',
       }}
     >
       <div style={{
         display: 'flex', alignItems: 'baseline', gap: 7,
-        fontSize: 11, fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+        fontSize: 12, fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
         color: 'var(--tb-text-muted)',
       }}>
         <span style={{ fontWeight: 700, color: badge.badge === 'queued' ? 'var(--tb-text-dim)' : 'var(--tb-text-muted)' }}>
@@ -89,7 +89,7 @@ function PromptRow({ chapter, selected, badge, onClick }: {
       </div>
 
       <div style={{
-        fontSize: 13, fontWeight: 400, lineHeight: 1.4, marginTop: 5,
+        fontSize: 14, fontWeight: 400, lineHeight: 1.4, marginTop: 5,
         color: badge.badge === 'queued' ? 'var(--tb-text-muted)' : 'var(--tb-text)',
         overflow: 'hidden',
         display: '-webkit-box',
@@ -101,7 +101,7 @@ function PromptRow({ chapter, selected, badge, onClick }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 8 }}>
         <span style={{
           display: 'inline-flex', alignItems: 'center', gap: 4,
-          fontSize: 10, fontWeight: 600, letterSpacing: '0.02em',
+          fontSize: 11, fontWeight: 600, letterSpacing: '0.02em',
           color: s.color, background: s.bg,
           border: `1px solid ${s.border}`,
           borderRadius: 5, padding: '2px 8px',
@@ -110,7 +110,7 @@ function PromptRow({ chapter, selected, badge, onClick }: {
           {badge.label}
         </span>
         {chapter.actionCount > 0 && (
-          <span style={{ fontSize: 11, color: 'var(--tb-text-muted)' }}>
+          <span style={{ fontSize: 12, color: 'var(--tb-text-muted)' }}>
             {chapter.actionCount} action{chapter.actionCount === 1 ? '' : 's'}
           </span>
         )}

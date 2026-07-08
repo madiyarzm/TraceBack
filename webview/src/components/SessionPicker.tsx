@@ -52,14 +52,14 @@ function SessionPill({ label, active, live, anomalous, count, onClick, isAuto }:
         cursor: 'pointer',
         flexShrink: 0,
         fontFamily: 'var(--tb-ui-font)',
-        fontSize: 10,
+        fontSize: 11,
         fontWeight: active ? 600 : 400,
         transition: 'background 0.1s, border-color 0.1s, color 0.1s',
         whiteSpace: 'nowrap',
       }}
     >
       {isAuto ? (
-        <span style={{ fontSize: 9, opacity: 0.7 }}>⟲</span>
+        <span style={{ fontSize: 10, opacity: 0.7 }}>⟲</span>
       ) : (
         <div
           className={live && !anomalous ? 'live-dot' : anomalous ? '' : ''}
@@ -77,7 +77,7 @@ function SessionPill({ label, active, live, anomalous, count, onClick, isAuto }:
 
       {count !== null && (
         <span style={{
-          fontSize: 8.5,
+          fontSize: 9.5,
           color: active ? 'var(--tb-text-muted)' : 'var(--tb-text-dim)',
           fontWeight: 400,
         }}>

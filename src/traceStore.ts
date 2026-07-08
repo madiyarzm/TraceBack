@@ -1,6 +1,7 @@
+import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { AnomalyRecord, AnomalyState, detectAnomaly } from './anomalyDetector';
-import { extractIntentForTool, noteTranscript, readContextTokens } from './tokenReader';
+import { extractDecisions, extractIntentForTool, LedgerItem, noteTranscript, readContextTokens } from './tokenReader';
 
 export type EventKind =
   | 'pre_tool_use'
@@ -108,6 +109,33 @@ export interface TraceSession {
   awaitingInput?: string;
   /** Live task plan from the agent's TodoWrite calls. */
   plan?: SessionPlan;
+  /** Pre-edit snapshot per file, captured on the FIRST PreToolUse Edit/Write
+   *  for that path (the hook fires before the tool executes). `content: null`
+   *  means the file did not exist yet — i.e. the agent created it. Powers the
+   *  net-change review: diff(baseline, disk-now) = the session's true effect. */
+  baselines?: Record<string, FileBaseline>;
+  /** Judgment calls mined from the transcript: decisions made and assumptions
+   *  taken, session-long (merged across transcript tail windows). */
+  ledger?: LedgerItem[];
+}
+
+export interface FileBaseline {
+  /** File content before the agent's first touch; null = didn't exist. */
+  content: string | null;
+  capturedAt: number;
+}
+
+/** Tools whose PreToolUse means "this file is about to change". */
+const FILE_MUTATING_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'FileWrite']);
+
+/** Baselines above this size are skipped — the review degrades gracefully. */
+const BASELINE_MAX_BYTES = 512 * 1024;
+
+/** Directories whose contents are never snapshotted, even if an edit targets
+ *  them — credentials and keys have no business in a code-review baseline. */
+const SENSITIVE_DIR = /(^|\/)\.(ssh|aws|gnupg|kube|docker|config\/gcloud)(\/|$)/;
+function isSensitivePath(p: string): boolean {
+  return SENSITIVE_DIR.test(p);
 }
 
 class TraceStore {
@@ -133,8 +161,6 @@ class TraceStore {
     };
     this._sessions.set(sessionId, session);
     this._activeSessionId = sessionId;
-    // Verification log: each distinct agent session shows up once here.
-    console.log(`[TraceBack] tracking new session ${sessionId} (${this._sessions.size} total)`);
     return session;
   }
 
@@ -191,6 +217,10 @@ class TraceStore {
       session.awaitingInput = undefined;
     }
 
+    // Baseline capture must be kicked off before anything else: the PreToolUse
+    // hook blocks the tool, so a read started now sees the file pre-edit.
+    if (event.kind === 'pre_tool_use') this._maybeCaptureBaseline(session, event);
+
     session.events.push(event);
     this._rebuildNodes(session);
 
@@ -211,7 +241,10 @@ class TraceStore {
       session.label = event.cwd.split('/').filter(Boolean).pop() ?? session.label;
     }
     this._maybeRefreshTokens(session);
-    if (event.kind === 'post_tool_use') this._attachIntent(session, event);
+    if (event.kind === 'post_tool_use') {
+      this._attachIntent(session, event);
+      this._maybeRefreshLedger(session);
+    }
 
     this._onDidUpdate.fire(session);
   }
@@ -220,6 +253,42 @@ class TraceStore {
     const { nodes: raw, plan } = buildNodes(session.events, session.stopped);
     session.nodes = applyBatchGrouping(raw);
     session.plan  = plan;
+  }
+
+  /**
+   * Snapshot a file the FIRST time the agent is about to mutate it. Reads
+   * synchronously: PreToolUse blocks the tool call until our HTTP response,
+   * and the response is only sent after addEvent returns — so a sync read
+   * here is guaranteed to see the pre-edit content. Files are small in
+   * practice; oversized ones are skipped rather than half-captured.
+   */
+  private _maybeCaptureBaseline(session: TraceSession, event: TraceEvent): void {
+    if (!FILE_MUTATING_TOOLS.has(event.toolName ?? '')) return;
+    const input = event.toolInput ?? {};
+    const path = (input.file_path ?? input.path ?? input.notebook_path) as string | undefined;
+    if (!path || typeof path !== 'string') return;
+
+    session.baselines ??= {};
+    if (path in session.baselines) return; // only the FIRST touch is the baseline
+
+    try {
+      // Defense in depth: the path comes from a hook payload. Never read
+      // through a symlink (blocks a payload from aiming the read at a secret
+      // via a planted link), and never snapshot known-sensitive locations.
+      const stat = fs.lstatSync(path);
+      if (stat.isSymbolicLink() || isSensitivePath(path)) {
+        session.baselines[path] = { content: null, capturedAt: Date.now() };
+        return;
+      }
+      if (stat.size > BASELINE_MAX_BYTES) return;
+      session.baselines[path] = {
+        content: fs.readFileSync(path, 'utf8'),
+        capturedAt: Date.now(),
+      };
+    } catch {
+      // ENOENT etc. — the agent is creating this file.
+      session.baselines[path] = { content: null, capturedAt: Date.now() };
+    }
   }
 
   /**
@@ -281,6 +350,32 @@ class TraceStore {
   }
 
   /**
+   * Throttled decision-ledger refresh. extractDecisions is tail-only, so new
+   * items are MERGED into the session ledger (deduped by text) — items that
+   * scroll out of the tail window stay.
+   */
+  private _ledgerReadAt = new Map<string, number>();
+
+  private _maybeRefreshLedger(session: TraceSession): void {
+    const path = session.transcriptPath;
+    if (!path) return;
+    const now  = Date.now();
+    const last = this._ledgerReadAt.get(session.id) ?? 0;
+    if (now - last < 4000) return;
+    this._ledgerReadAt.set(session.id, now);
+
+    void extractDecisions(path).then((items) => {
+      if (items.length === 0) return;
+      const existing = session.ledger ?? [];
+      const seen = new Set(existing.map((it) => it.text.toLowerCase()));
+      const fresh = items.filter((it) => !seen.has(it.text.toLowerCase()));
+      if (fresh.length === 0) return;
+      session.ledger = [...existing, ...fresh].sort((a, b) => a.timestamp - b.timestamp);
+      this._onDidUpdate.fire(session);
+    });
+  }
+
+  /**
    * Periodic re-evaluation for time-based anomalies (the Silent Stall can
    * only trip via the clock, never via an incoming event). Fires an update
    * only when the anomaly state actually changes.
@@ -310,8 +405,10 @@ class TraceStore {
   private _setAnomaly(session: TraceSession, next: AnomalyState | undefined): void {
     const prev = session.anomaly;
     session.anomaly = next;
+    // Stalls are "waiting on the user", not agent misbehavior — they show as
+    // a live notice but never enter the permanent anomaly record.
     const isOnset =
-      next?.isAnomalous && next.type &&
+      next?.isAnomalous && next.type && next.type !== 'stall' &&
       (!prev?.isAnomalous || prev.type !== next.type);
     if (isOnset) {
       const record: AnomalyRecord = {
@@ -407,9 +504,13 @@ function buildNodes(events: TraceEvent[], stopped: boolean): BuildResult {
       if (items) plan = { items, updatedAt: event.timestamp };
     } else if (event.toolName === 'TaskCreate') {
       if (typeof input?.subject !== 'string') return;
+      // Provisional '?n' id — the REAL id arrives in the PostToolUse response
+      // ("Task #18 created successfully"): Claude Code numbers tasks across
+      // the whole conversation, not per session, so a local counter guesses
+      // wrong whenever the session isn't the conversation's first.
       taskCounter++;
       const item: PlanItem = {
-        id:         String(taskCounter),
+        id:         `?${taskCounter}`,
         content:    input.subject,
         status:     'pending',
         activeForm: typeof input.activeForm === 'string' ? input.activeForm : undefined,
@@ -422,9 +523,11 @@ function buildNodes(events: TraceEvent[], stopped: boolean): BuildResult {
         : typeof rawId === 'number' ? String(rawId)
         : null;
       if (!id || !plan) return;
+      // '?n' fallback keeps sessions working when the response id was missing.
+      const matches = (it: PlanItem) => it.id === id || it.id === `?${id}`;
       const items = plan.items
-        .filter((it) => !(it.id === id && input?.status === 'deleted'))
-        .map((it) => it.id !== id ? it : {
+        .filter((it) => !(matches(it) && input?.status === 'deleted'))
+        .map((it) => !matches(it) ? it : {
           ...it,
           status:
             input?.status === 'in_progress' || input?.status === 'completed'
@@ -476,6 +579,17 @@ function buildNodes(events: TraceEvent[], stopped: boolean): BuildResult {
     }
 
     if (event.kind === 'post_tool_use') {
+      // The TaskCreate response carries the task's REAL conversation-wide id
+      // ("Task #18 created successfully") — confirm the provisional one.
+      if (event.toolName === 'TaskCreate' && plan) {
+        const m = /#(\d+)/.exec(event.toolResponse ?? '');
+        const idx = m ? plan.items.findIndex((it) => it.id?.startsWith('?')) : -1;
+        if (m && idx !== -1) {
+          const items = plan.items.map((it, i) => i === idx ? { ...it, id: m[1] } : it);
+          plan = { items, updatedAt: event.timestamp };
+        }
+      }
+
       const pending = [...nodes].reverse().find(
         (n) => n.toolName === event.toolName && n.status === 'pending'
       );
@@ -549,6 +663,9 @@ function applyBatchGrouping(nodes: TraceNode[]): TraceNode[] {
     while (
       runEnd < nodes.length &&
       nodes[runEnd].toolName === current.toolName &&
+      // A batch must stay inside one task — merging across an objective
+      // change would strip those calls out of their plan group in the UI.
+      nodes[runEnd].objective === current.objective &&
       !nodes[runEnd].toolName.startsWith('__') &&
       !nodes[runEnd].isPlanUpdate
     ) {
@@ -569,6 +686,7 @@ function applyBatchGrouping(nodes: TraceNode[]): TraceNode[] {
         label: `${runLength} steps`,
         count: runLength,
         eventIds: batchNodes.flatMap((n) => n.eventIds),
+        objective: current.objective,
         isBatch: true,
         durationMs: batchNodes.reduce((sum, n) => sum + (n.durationMs ?? 0), 0) || undefined,
         batchItems: batchNodes.map((n) => ({

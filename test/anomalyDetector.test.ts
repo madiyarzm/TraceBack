@@ -19,12 +19,13 @@ function pre(toolName: string, input: Record<string, unknown> = {}, t = NOW): Tr
   };
 }
 
-function post(toolName: string, isError = false, t = NOW): TraceEvent {
+function post(toolName: string, isError = false, t = NOW, input?: Record<string, unknown>): TraceEvent {
   return {
     id:        id(),
     sessionId: 's1',
     kind:      'post_tool_use',
     toolName,
+    toolInput: input,
     isError,
     timestamp: t,
   };
@@ -48,56 +49,92 @@ describe('detectAnomaly', () => {
   });
 
   describe('near_duplicate_loop', () => {
-    it('flags 3 identical calls within the last 10 events', () => {
-      const events = Array.from({ length: 3 }, () =>
-        pre('Read', { file_path: '/loop.ts' })
-      );
-      const a = detectAnomaly(events, NOW);
+    /** n failed runs of `cmd`, interleaved with successful reads so
+     *  error_thrash (3 consecutive failed posts) never masks the loop rule. */
+    function failedRuns(cmd: string, n: number): TraceEvent[] {
+      const events: TraceEvent[] = [];
+      for (let i = 0; i < n; i++) {
+        events.push(pre('Bash', { command: cmd }));
+        events.push(post('Bash', true, NOW, { command: cmd }));
+        events.push(pre('Read', { file_path: `/pad${i}.ts` }));
+        events.push(post('Read', false));
+      }
+      return events;
+    }
+
+    it('flags the exact same bash command failing 3 times', () => {
+      const a = detectAnomaly(failedRuns('npm test', 3), NOW);
       expect(a.isAnomalous).toBe(true);
       expect(a.type).toBe('near_duplicate_loop');
       expect(a.severity).toBe('high');
       expect(a.flaggedEventIds).toHaveLength(3);
     });
 
-    it('flags near-duplicates: same base command, different args', () => {
+    it('does NOT flag 2 failed runs (under threshold)', () => {
+      expect(detectAnomaly(failedRuns('npm test', 2), NOW).isAnomalous).toBe(false);
+    });
+
+    it('does NOT flag when a run of the same command succeeded in between', () => {
+      const events = [
+        ...failedRuns('npm test', 2),
+        pre('Bash', { command: 'npm test' }),
+        post('Bash', false, NOW, { command: 'npm test' }),
+        ...failedRuns('npm test', 2),
+      ];
+      expect(detectAnomaly(events, NOW).type).not.toBe('near_duplicate_loop');
+    });
+
+    it('does NOT flag the same base command with different args', () => {
       const events = [
         pre('Bash', { command: 'python test.py' }),
-        post('Bash', true),
+        post('Bash', true, NOW, { command: 'python test.py' }),
         pre('Bash', { command: 'python test.py --verbose' }),
-        post('Bash', true),
-        pre('Bash', { command: 'python test.py -x --tb=short' }),
+        post('Bash', true, NOW, { command: 'python test.py --verbose' }),
+        pre('Bash', { command: 'python test.py -x' }),
+        post('Bash', true, NOW, { command: 'python test.py -x' }),
       ];
+      expect(detectAnomaly(events, NOW).type).not.toBe('near_duplicate_loop');
+    });
+
+    it('flags the same file read 5 times with no edit in between', () => {
+      const events = Array.from({ length: 5 }, () =>
+        pre('Read', { file_path: '/loop.ts' })
+      );
       const a = detectAnomaly(events, NOW);
       expect(a.type).toBe('near_duplicate_loop');
+      expect(a.flaggedEventIds).toHaveLength(5);
     });
 
-    it('does NOT flag 2 identical calls (under threshold)', () => {
-      const events = [
-        pre('Read', { file_path: '/loop.ts' }),
-        pre('Read', { file_path: '/loop.ts' }),
-      ];
+    it('does NOT flag 4 reads of the same file (under threshold)', () => {
+      const events = Array.from({ length: 4 }, () =>
+        pre('Read', { file_path: '/loop.ts' })
+      );
       expect(detectAnomaly(events, NOW).isAnomalous).toBe(false);
     });
 
-    it('does NOT flag same tool with different targets', () => {
-      const events = [
-        pre('Read', { file_path: '/a.ts' }),
-        pre('Read', { file_path: '/b.ts' }),
-        pre('Read', { file_path: '/c.ts' }),
-      ];
+    it('does NOT flag read→edit→re-read verification cycles', () => {
+      const FILE = `${CWD}/iter.ts`;
+      const events: TraceEvent[] = [];
+      for (let i = 0; i < 5; i++) {
+        events.push(pre('Read', { file_path: FILE }));
+        events.push(pre('Edit', { file_path: FILE }));
+      }
+      events.push(pre('Read', { file_path: FILE }));
+      expect(detectAnomaly(events, NOW).type).not.toBe('near_duplicate_loop');
+    });
+
+    it('does NOT flag reads of different files', () => {
+      const events = Array.from({ length: 5 }, (_, i) =>
+        pre('Read', { file_path: `/f${i}.ts` })
+      );
       expect(detectAnomaly(events, NOW).isAnomalous).toBe(false);
     });
 
-    it('does NOT count repeats that fell out of the 10-event window', () => {
-      const events = [
-        pre('Bash', { command: 'npm test' }),
-        pre('Bash', { command: 'npm test' }),
-        // 9 unrelated events push the first two out of the window
-        ...Array.from({ length: 9 }, (_, i) => pre('Read', { file_path: `/f${i}.ts` })),
-        pre('Bash', { command: 'npm test' }),
-      ];
-      const a = detectAnomaly(events, NOW);
-      expect(a.type).not.toBe('near_duplicate_loop');
+    it('does NOT flag repeated edits to the same file (iterative editing)', () => {
+      const events = Array.from({ length: 6 }, (_, i) =>
+        pre('Edit', { file_path: `${CWD}/a.ts`, old_string: `v${i}`, new_string: `v${i + 1}` })
+      );
+      expect(detectAnomaly(events, NOW).isAnomalous).toBe(false);
     });
   });
 
@@ -135,7 +172,8 @@ describe('detectAnomaly', () => {
       expect(a.isAnomalous).toBe(true);
       expect(a.type).toBe('stall');
       expect(a.severity).toBe('medium');
-      expect(a.description).toMatch(/Stalled/i);
+      expect(a.description).toMatch(/pending for \d+s/);
+      expect(a.description).toMatch(/waiting for your approval/i);
     });
 
     it('does NOT flag a PreToolUse under the threshold', () => {
@@ -222,56 +260,23 @@ describe('detectAnomaly', () => {
     });
   });
 
-  describe('thrash_no_progress', () => {
-    const FILE = `${CWD}/logger.ts`;
-
-    function readEditRounds(n: number): TraceEvent[] {
+  describe('read→edit iteration is never an anomaly (thrash detector removed)', () => {
+    it('does NOT flag repeated read→edit rounds on the same file', () => {
+      const FILE = `${CWD}/logger.ts`;
       const events: TraceEvent[] = [];
-      for (let i = 0; i < n; i++) {
+      for (let i = 0; i < 4; i++) {
         events.push(pre('Read', { file_path: FILE }));
         events.push(post('Read', false));
         events.push(pre('Edit', { file_path: FILE, old_string: `v${i}`, new_string: `v${i + 1}` }));
         events.push(post('Edit', false));
       }
-      return events;
-    }
-
-    it('flags 3 read→edit rounds on the same file', () => {
-      const a = detectAnomaly(readEditRounds(3), NOW);
-      expect(a.type).toBe('thrash_no_progress');
-      expect(a.severity).toBe('high');
-      expect(a.flaggedEventIds).toHaveLength(6);
-    });
-
-    it('does NOT flag 2 rounds (under threshold)', () => {
-      expect(detectAnomaly(readEditRounds(2), NOW).type).not.toBe('thrash_no_progress');
-    });
-
-    it('resets when the active task changes (TodoWrite in between)', () => {
-      const events = [
-        ...readEditRounds(2),
-        pre('TodoWrite', { todos: [{ content: 'next task', status: 'in_progress' }] }),
-        ...readEditRounds(1),
-      ];
-      expect(detectAnomaly(events, NOW).type).not.toBe('thrash_no_progress');
-    });
-
-    it('does NOT flag rounds on different files', () => {
-      const events = [
-        pre('Read', { file_path: '/a.ts' }), post('Read'),
-        pre('Edit', { file_path: `${CWD}/a.ts` }), post('Edit'),
-        pre('Read', { file_path: '/b.ts' }), post('Read'),
-        pre('Edit', { file_path: `${CWD}/b.ts` }), post('Edit'),
-        pre('Read', { file_path: '/c.ts' }), post('Read'),
-        pre('Edit', { file_path: `${CWD}/c.ts` }), post('Edit'),
-      ];
-      expect(detectAnomaly(events, NOW).type).not.toBe('thrash_no_progress');
+      expect(detectAnomaly(events, NOW).isAnomalous).toBe(false);
     });
   });
 
   describe('anomaly shape', () => {
     it('every anomaly carries type, severity, title, description', () => {
-      const events = Array.from({ length: 3 }, () =>
+      const events = Array.from({ length: 5 }, () =>
         pre('Read', { file_path: '/loop.ts' })
       );
       const a = detectAnomaly(events, NOW);
@@ -290,5 +295,15 @@ describe('detectAnomaly', () => {
       pre('Read', { file_path: '/x' }, NOW - 150_000),
     ];
     expect(detectAnomaly(events, NOW).type).toBe('stall');
+  });
+});
+
+describe('scope_creep whitelist', () => {
+  it("does NOT flag writes into Claude's own config/memory directories", () => {
+    const events = [
+      pre('Read', { file_path: `${CWD}/a.ts` }),
+      pre('Edit', { file_path: '/Users/me/.claude/projects/x/memory/notes.md' }),
+    ];
+    expect(detectAnomaly(events, NOW).isAnomalous).toBe(false);
   });
 });

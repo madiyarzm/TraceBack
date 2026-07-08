@@ -17,6 +17,8 @@ export type AnomalyType =
   | 'stall'
   | 'context_spiral'
   | 'scope_creep'
+  // No longer detected (read→edit iteration is normal); kept so archived
+  // sessions with old records still typecheck.
   | 'thrash_no_progress';
 
 export type AnomalySeverity = 'high' | 'medium';
@@ -48,12 +50,11 @@ export interface AnomalyRecord {
   detectedAt:      number;
 }
 
-const NEAR_DUP_N     = 3;        // same tool+base-command in the window
-const NEAR_DUP_WIN   = 10;       // window (events of any kind) for near-dups
+const FAILED_CMD_N   = 3;        // exact same bash command, non-zero exit every time
+const READ_LOOP_N    = 5;        // exact same read path with no edit/write between
 const THRASH_N       = 3;        // consecutive failed PostToolUse results
 const STALL_MS       = 120_000;  // PreToolUse with no Post for this long
 const SPIRAL_N       = 8;        // consecutive reads with no edit/write/bash
-const FILE_THRASH_N  = 3;        // read→edit round-trips on one file
 const SCAN_CAP       = 64;       // never look further back than this many events
 
 export const NO_ANOMALY: AnomalyState = { isAnomalous: false, flaggedEventIds: [] };
@@ -66,13 +67,9 @@ export function detectAnomaly(events: TraceEvent[], now: number): AnomalyState {
   if (events.length === 0) return NO_ANOMALY;
   // Most acute condition first (a stall means nothing is happening right
   // now), then the high-severity loops, then the medium-severity drifts.
-  // thrash_no_progress runs before near_duplicate_loop: its read→edit rounds
-  // also contain 3 same-file edits, which would otherwise match the looser
-  // near-duplicate rule and mask the more specific diagnosis.
   return (
     detectStall(events, now) ??
     detectErrorThrash(events) ??
-    detectThrashNoProgress(events) ??
     detectNearDuplicateLoop(events) ??
     detectScopeCreep(events) ??
     detectContextSpiral(events) ??
@@ -108,14 +105,21 @@ function filePathOf(e: TraceEvent): string | undefined {
 
 // ── 3. Stall (medium) ────────────────────────────────────────────────────────
 
+/**
+ * A pending call with no result for a long time. NOT agent misbehavior — in
+ * practice this is almost always Claude waiting on the USER (a permission
+ * prompt, manual-mode approval, an unread question), so the UI renders it as
+ * a quiet "waiting" notice and traceStore never records it as an anomaly.
+ */
 function detectStall(events: TraceEvent[], now: number): AnomalyState | null {
   const last = events[events.length - 1];
   if (last.kind !== 'pre_tool_use') return null;
   if (now - last.timestamp <= STALL_MS) return null;
   const secs = Math.round((now - last.timestamp) / 1000);
   return state(
-    'stall', 'medium', 'Stall',
-    `Stalled: ${last.toolName ?? 'tool'} unresponsive for ${secs}s.`,
+    'stall', 'medium', 'Waiting',
+    `${last.toolName ?? 'A tool'} call has been pending for ${secs}s — ` +
+    'Claude may be waiting for your approval in the terminal.',
     [last.id],
   );
 }
@@ -135,81 +139,65 @@ function detectErrorThrash(events: TraceEvent[]): AnomalyState | null {
 // ── 1. Near-duplicate loop (high) ────────────────────────────────────────────
 
 /**
- * Loosened call signature: tool name + base command/target with arguments
- * stripped. "python test.py" retried with different flags, or the same file
- * re-read over and over, counts as the same action — exact-match repetition
- * proved too strict in field data.
+ * Deliberately strict — read→edit→re-read verification and iterative editing
+ * are normal agent behavior, never a loop. Fires on exactly two patterns:
+ *
+ *  a) The EXACT same bash command (args included) completed FAILED_CMD_N+
+ *     times, non-zero exit every time (one success clears it).
+ *  b) The exact same file was Read READ_LOOP_N+ times with no Edit/Write to
+ *     that file in between (an edit means the re-reads were verification).
  */
-export function callSignature(e: TraceEvent): string {
-  const input = e.toolInput ?? {};
-  if (e.toolName === 'Bash' && typeof input.command === 'string') {
-    const base = input.command
-      .trim()
-      .split(/\s+/)
-      .filter((t) => !t.startsWith('-'))
-      .slice(0, 2)
-      .join(' ');
-    return `Bash:${base}`;
-  }
-  const target =
-    filePathOf(e) ??
-    (typeof input.url === 'string' ? input.url : undefined) ??
-    (typeof input.query === 'string' ? input.query : undefined) ??
-    (typeof input.pattern === 'string' ? input.pattern : undefined) ??
-    JSON.stringify(input);
-  return `${e.toolName}:${target}`;
+function detectNearDuplicateLoop(events: TraceEvent[]): AnomalyState | null {
+  return detectFailedCommandLoop(events) ?? detectReadLoop(events);
 }
 
-/** Plan bookkeeping repeats legitimately — never a "loop". */
-const PLAN_TOOL_NAMES = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate', 'TodoRead']);
+function detectFailedCommandLoop(events: TraceEvent[]): AnomalyState | null {
+  // Anchor on the newest completed Bash call — must itself be a failure.
+  const posts = tailOfKind(events, 'post_tool_use', SCAN_CAP);
+  const newest = posts.find((e) => e.toolName === 'Bash');
+  if (!newest || !newest.isError) return null;
+  const cmd = typeof newest.toolInput?.command === 'string' ? newest.toolInput.command : undefined;
+  if (!cmd) return null;
 
-function detectNearDuplicateLoop(events: TraceEvent[]): AnomalyState | null {
-  const start = Math.max(0, events.length - NEAR_DUP_WIN);
-  const window = events.slice(start).filter(
-    (e) => e.kind === 'pre_tool_use' && !PLAN_TOOL_NAMES.has(e.toolName ?? '')
-  );
-  if (window.length === 0) return null;
+  // Walk older completed runs of the identical command; a success clears it.
+  const matches: TraceEvent[] = [];
+  for (const e of posts) {
+    if (e.toolName !== 'Bash' || e.toolInput?.command !== cmd) continue;
+    if (!e.isError) break;
+    matches.push(e);
+  }
+  if (matches.length < FAILED_CMD_N) return null;
 
-  const newest = window[window.length - 1];
-  const sig = callSignature(newest);
-  const matches = window.filter((e) => e.toolName === newest.toolName && callSignature(e) === sig);
-  if (matches.length < NEAR_DUP_N) return null;
-
-  const what = sig.slice(sig.indexOf(':') + 1) || newest.toolName || 'call';
   return state(
     'near_duplicate_loop', 'high', 'Near-duplicate loop',
-    `${newest.toolName ?? 'Tool'} "${what}" ran ${matches.length}× in the last ${NEAR_DUP_WIN} events.`,
+    `"${cmd}" ran ${matches.length}× and failed every time.`,
     matches.map((e) => e.id),
   );
 }
 
-// ── 6. Thrash without progress (high) ────────────────────────────────────────
-
-/**
- * Same file READ then EDIT, 3+ round-trips in a row, with no plan-tool call
- * in between (a TodoWrite/TaskUpdate between rounds breaks the alternation,
- * which is exactly the "active task changed" reset the rule wants).
- */
-function detectThrashNoProgress(events: TraceEvent[]): AnomalyState | null {
-  const pres = tailOfKind(events, 'pre_tool_use', FILE_THRASH_N * 2);
-  if (pres.length < FILE_THRASH_N * 2) return null;
-
-  // pres is newest-first: expect Edit(f), Read(f), Edit(f), Read(f), …
-  const file = filePathOf(pres[0]);
-  if (!file || !EDIT_TOOLS.has(pres[0].toolName ?? '')) return null;
-
-  for (let i = 0; i < FILE_THRASH_N * 2; i++) {
-    const e = pres[i];
-    const wantEdit = i % 2 === 0;
-    const okTool = wantEdit ? EDIT_TOOLS.has(e.toolName ?? '') : e.toolName === 'Read';
-    if (!okTool || filePathOf(e) !== file) return null;
+function detectReadLoop(events: TraceEvent[]): AnomalyState | null {
+  // Anchor on the newest Read; count identical reads walking backward, and
+  // stop at any Edit/Write touching that same file.
+  const stop = Math.max(0, events.length - SCAN_CAP);
+  let file: string | undefined;
+  const matches: TraceEvent[] = [];
+  for (let i = events.length - 1; i >= stop; i--) {
+    const e = events[i];
+    if (e.kind !== 'pre_tool_use') continue;
+    if (file === undefined) {
+      if (e.toolName !== 'Read') return null;
+      file = filePathOf(e);
+      if (!file) return null;
+    }
+    if (EDIT_TOOLS.has(e.toolName ?? '') && filePathOf(e) === file) break;
+    if (e.toolName === 'Read' && filePathOf(e) === file) matches.push(e);
   }
+  if (matches.length < READ_LOOP_N) return null;
 
-  const flagged = pres.slice(0, FILE_THRASH_N * 2);
   return state(
-    'thrash_no_progress', 'high', 'Thrash without progress',
-    `${shortPath(file)} read and edited ${FILE_THRASH_N}× in a row without the active task changing.`,
-    flagged.map((e) => e.id),
+    'near_duplicate_loop', 'high', 'Near-duplicate loop',
+    `${shortPath(file!)} read ${matches.length}× with no edit in between.`,
+    matches.map((e) => e.id),
   );
 }
 
@@ -226,6 +214,9 @@ function detectScopeCreep(events: TraceEvent[]): AnomalyState | null {
   const file = filePathOf(last);
   if (!file || !file.startsWith('/')) return null;              // relative = inside cwd
   if (file === cwd || file.startsWith(cwd.endsWith('/') ? cwd : cwd + '/')) return null;
+  // Claude's own config/memory lives outside every workspace by design —
+  // writing there is normal agent behavior, not scope creep.
+  if (file.includes('/.claude/')) return null;
 
   return state(
     'scope_creep', 'medium', 'Scope creep',

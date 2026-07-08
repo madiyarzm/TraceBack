@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  anomaliesFor, chapterBadge, computeChapters, pendingPlanItems,
+  anomaliesFor, chapterBadge, computeChapters, computePhaseBlocks, pendingPlanItems,
 } from '../webview/src/chapters';
 import type { TimelineNode } from '../webview/src/components/TimelineCard';
 import type { AnomalyRecordUI } from '../webview/src/useSessionFeed';
@@ -166,5 +166,97 @@ describe('chapterBadge', () => {
   it('marks an empty live last chapter as queued', () => {
     const empty = { ...base, actionCount: 0 };
     expect(chapterBadge(empty, { isLast: true, isLive: true, anomalyCount: 0 }).badge).toBe('queued');
+  });
+});
+
+describe('computePhaseBlocks', () => {
+  it('groups consecutive same-type runs into typed blocks', () => {
+    const blocks = computePhaseBlocks([
+      node({ toolName: 'Read', durationMs: 100 }),
+      node({ toolName: 'Read', durationMs: 200 }),
+      node({ toolName: 'Bash', durationMs: 50 }),
+      node({ toolName: 'Bash', durationMs: 50 }),
+      node({ toolName: 'Edit' }),
+      node({ toolName: 'Write' }),
+    ]);
+    expect(blocks.map((b) => b.label)).toEqual(['Reading', 'Running', 'Editing']);
+    expect(blocks[0].actionCount).toBe(2);
+    expect(blocks[0].durationMs).toBe(300);
+  });
+
+  it('pools single actions and unclassified tools into Actions blocks', () => {
+    const blocks = computePhaseBlocks([
+      node({ toolName: 'Read' }),           // run of 1 → Actions
+      node({ toolName: 'WebSearch' }),      // unclassified → Actions (merged)
+      node({ toolName: 'Bash' }),
+      node({ toolName: 'Bash' }),
+      node({ toolName: 'Grep' }),           // unclassified, single → Actions
+    ]);
+    expect(blocks.map((b) => b.label)).toEqual(['Actions', 'Running', 'Actions']);
+    expect(blocks[0].actionCount).toBe(2);
+  });
+
+  it('a batch node counts as a typed run on its own', () => {
+    const blocks = computePhaseBlocks([
+      node({ toolName: 'Read', isBatch: true, count: 4 }),
+      node({ toolName: 'Edit' }),
+      node({ toolName: 'Edit' }),
+    ]);
+    expect(blocks.map((b) => b.label)).toEqual(['Reading', 'Editing']);
+    expect(blocks[0].actionCount).toBe(4);
+  });
+
+  it('tracks errors per block without changing the grouping', () => {
+    const blocks = computePhaseBlocks([
+      node({ toolName: 'Bash' }),
+      node({ toolName: 'Bash', status: 'error' }),
+    ]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].errorCount).toBe(1);
+  });
+
+  it('never returns a flat list — everything lands in some block', () => {
+    const blocks = computePhaseBlocks([node({ toolName: 'WebFetch' })]);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].label).toBe('Actions');
+  });
+});
+
+describe('phase block summaries', () => {
+  it('names the files a Reading/Editing block touched', () => {
+    const blocks = computePhaseBlocks([
+      node({ toolName: 'Read', toolInput: { file_path: '/src/codename.ts' } }),
+      node({ toolName: 'Read', toolInput: { file_path: '/src/PanelApp.tsx' } }),
+      node({ toolName: 'Read', toolInput: { file_path: '/src/chapters.ts' } }),
+    ]);
+    expect(blocks[0].summary).toBe('codename.ts, PanelApp.tsx +1');
+  });
+
+  it('names the command stems a Running block executed, deduped', () => {
+    const blocks = computePhaseBlocks([
+      node({ toolName: 'Bash', toolInput: { command: 'npm test' } }),
+      node({ toolName: 'Bash', toolInput: { command: 'npm test -- --watch=false' } }),
+      node({ toolName: 'Bash', toolInput: { command: 'npx tsc --noEmit' } }),
+    ]);
+    expect(blocks[0].summary).toBe('npm test, npx tsc');
+  });
+});
+
+describe('TaskCreate/TaskUpdate with conversation-wide ids', () => {
+  it('resolves the real id from the TaskCreate response in node.detail', () => {
+    const nodes = [
+      prompt('p', T0),
+      node({ toolName: 'TaskCreate', isPlanUpdate: true, timestamp: T0 + 1,
+             toolInput: { subject: 'Reclassify stall' },
+             detail: 'Task #18 created successfully: Reclassify stall' }),
+      node({ toolName: 'TaskUpdate', isPlanUpdate: true, timestamp: T0 + 2,
+             toolInput: { taskId: '18', status: 'in_progress' } }),
+      node({ toolName: 'TaskUpdate', isPlanUpdate: true, timestamp: T0 + 3,
+             toolInput: { taskId: '18', status: 'completed' } }),
+    ];
+    const c = computeChapters(nodes)[0];
+    expect(c.plan).toHaveLength(1);
+    expect(c.plan[0].status).toBe('completed');
+    expect(pendingPlanItems(c)).toHaveLength(0);
   });
 });

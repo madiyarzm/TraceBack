@@ -14,11 +14,13 @@
 
 ---
 
-You started a Claude Code session and walked away. The agent is reading files, running commands, making edits. Five minutes later you come back — and you have no idea what it did.
+You started a Claude Code session and walked away. The agent read fourteen files, ran some commands, edited four. Five minutes later you come back to "All done!" — and you have no idea what actually changed, why, or whether any of it was checked.
 
-**TraceBack fixes that.** It hooks directly into Claude Code's hook system and streams every tool call into a live, scrolling action timeline in your VS Code sidebar — with anomaly detection that catches loops, error storms, and silent stalls *while the agent is still running*.
+**TraceBack answers that.** It hooks into Claude Code's hook system and turns a session into something you can *review*: your prompts become chapters, the agent's work groups under the tasks it declared, and when the run ends you get a net-change diff per file — the true before-and-after, annotated with the agent's own reasoning and a badge for whether anything verified it.
 
-> _"What did my agent just do? Why is it stuck? Did it loop? What file did it touch?"_ — answered in real time, without leaving your editor.
+Claude Code's transcript shows you the agent working. TraceBack shows you **what changed, why, and whether it was checked** — so you stay the engineer instead of a spectator.
+
+> _"What did my agent actually change? Why this edit? Was it tested? What did it assume on my behalf?"_ — answered from evidence, in your editor.
 
 ---
 
@@ -32,15 +34,16 @@ You started a Claude Code session and walked away. The agent is reading files, r
 
 ## Why TraceBack?
 
-Most "agent observability" tools (Langfuse, Arize, LangSmith) ship cloud dashboards meant for production traffic. TraceBack is the opposite: **local-first, in-editor, zero-setup, real-time**, focused on the dev loop.
+Most "agent observability" tools (Langfuse, Arize, LangSmith) ship cloud dashboards that answer *"how much"* — tokens, latency, spend — for production traffic. TraceBack answers a different question, *"what changed and can I trust it"*, for the single developer in the loop: **local-first, in-editor, zero-setup, evidence-based**.
 
 | | Cloud dashboards | Terminal output | **TraceBack** |
 |---|---|---|---|
 | Setup | API keys, SDKs, project ids | none | **zero** — auto-installs hooks |
-| Latency | seconds | live but ephemeral | **live** + scrollable |
-| Loop / stall detection | none | none | **built-in** |
+| Answers | how much (stats) | what, right now | **what changed, why, verified?** |
+| Net diff per file | no | no | **baseline → now, with reasoning** |
+| Verification | no | no | **which changes a test actually ran** |
+| Loop / drift detection | none | none | **built-in, tuned for low noise** |
 | Multi-agent visibility | one project per dashboard | one terminal each | **fleet view in one panel** |
-| Token / cost view | yes | no | **real usage from transcript** |
 | Cost | $$$ tier | free | **free, local** |
 
 ---
@@ -71,39 +74,49 @@ TraceBack injects lightweight `curl` hooks into `~/.claude/settings.json` on act
 
 ```
 Claude Code CLI
-    │  PreToolUse / PostToolUse / PostToolUseFailure / Stop hook fires
-    │  curl → POST localhost:7777/event
+    │  UserPromptSubmit / PreToolUse / PostToolUse / Stop hook fires
+    │  curl → POST 127.0.0.1:7777/event
     ▼
 TraceBack server  (Node.js, in-process)
     │  parses payload → TraceEvent
     ▼
 TraceStore  (in-memory session state) ──► AnomalyDetector  (pure, tail-only, O(1))
-    │  onDidUpdate event
+    │  onDidUpdate event                    baseline snapshots on first edit
     ▼
 Webview  (React + Vite)
-    └─ live timeline + metrics odometer, rendered in the sidebar
+    └─ prompt chapters, task blocks, net-change review — sidebar or full panel
 ```
 
-No sockets between extension and webview — just VS Code's `postMessage`. No polling. Zero latency between a tool call firing and the card appearing in the timeline.
+The server binds `127.0.0.1` only and refuses any request carrying an `Origin` header, so a browser can't reach it. Extension ↔ webview talk over VS Code's `postMessage` — no sockets, no polling.
 
 ---
 
 ## Features
 
-### Live action timeline
-Every tool call renders as a card — `pending → success / error` — in real time. Click any card to inspect the full tool input and output inline. File edits (`Edit`, `Write`, `MultiEdit`) render as a Git-style line diff.
+### Prompt chapters
+A session is a book: each prompt you send opens a chapter, and everything the agent did until your next prompt belongs to it. Inside a chapter, actions group under the tasks the agent declared (via its todo tools) — so you read *"Fix stream close → ran the test, edited the file"* instead of a flat scroll. When the agent doesn't plan, actions still group into tidy **Reading / Editing / Running** phase blocks; the view is never a raw list.
 
-### Anomaly engine
-A pure, tail-only detector that re-evaluates on every event in O(1). Catches six failure modes automatically:
+### Net-change review
+When a run ends, hit **Review changes**. Instead of replaying every edit, TraceBack shows the *net* diff per file — the true baseline-to-now, captured by snapshotting each file the instant before the agent's first edit. Each file carries the agent's own reasoning for the change, the failing command that triggered it (if any), and a verification badge.
 
-- **Near-duplicate loop** *(high)* — same tool + base command 3+ times in the last 10 events, args ignored.
-- **Error thrash** *(high)* — 3 consecutive failed tool calls (the agent is making things worse).
-- **Thrash without progress** *(high)* — the same file read→edited 3+ times in a row with no task change.
-- **Silent stall** *(medium)* — a tool call pending for more than 120 seconds with no response.
-- **Context spiral** *(medium)* — 8+ consecutive reads with no edit, write, or command; exploring aimlessly.
-- **Scope creep** *(medium)* — edits/writes landing outside the session's working directory.
+### Verification badges
+For every changed file: **verified** (a test/build/lint command ran after the last edit and passed), **failing** (it ran and errored), or **unverified** (nothing exercised it). "2 of 5 changed files never checked" is the sentence that decides whether you commit — the agent says "done"; TraceBack says what was actually run.
 
-Anomalies fire a native VS Code notification (even with the sidebar hidden), permanently tag the implicated cards, and count on the odometer. Live alerts self-clear the moment the condition stops holding — the evidence trail doesn't.
+### Decision & assumption ledger
+The judgment calls the agent makes in prose — *"I'll assume the config stays JSON,"* *"went with a regex instead of a dependency"* — mined from the transcript and surfaced as a list. Catch a wrong assumption live and redirect before three files calcify around it; for a learner, it makes visible that coding is choices, not typing.
+
+### Replay
+Step through any finished session like a debugger. The cursor slices the event list and *every* view — chapters, files, decisions — recomputes from the slice, so the whole session time-travels together. Read the intent, predict the next action, advance to check: the study loop that keeps the tool from atrophying yours.
+
+### Anomaly engine — tuned for low noise
+A pure, tail-only detector that re-evaluates on every event in O(1). It is deliberately quiet, because a tool that cries wolf gets muted:
+
+- **Near-duplicate loop** *(high)* — the exact same command failing 3+ times, or the same file read 5+ times with no edit between. Iterative read→edit→re-read is normal and never flagged.
+- **Error thrash** *(high)* — 3 consecutive failed tool calls.
+- **Context spiral** *(medium)* — 8+ consecutive reads with no edit, write, or command.
+- **Scope creep** *(medium)* — edits landing outside the working directory (Claude's own config excepted).
+
+A stall (a call pending with no result) is treated as **"waiting on you"** — a quiet notice, not a red alarm — because it usually means Claude is at a permission prompt. Real anomalies fire a native VS Code notification and stay as a permanent evidence trail; live alerts self-clear when the condition stops holding.
 
 ### Breakpoints for running agents
 Hit **⏸ pause** and the agent freezes at its next tool call — TraceBack holds the hook's HTTP response open, exactly like a breakpoint in a debugger. Inspect the timeline, then **▶ resume**… or type into the redirect box:
@@ -128,8 +141,11 @@ Custom guards are plain regexes matched against the full tool call (tool name + 
 
 A matching call is denied *before it executes* via Claude Code's hook decision protocol; the guard's name is fed back into the agent's context so it knows why and can change course. The CLI asks per session, interactively; guards are fleet-wide policy.
 
+### Files touched, not just files changed
+The Files tab toggles between **Changes** (what was created/modified, with +/− lines and verification badges) and **Touched** — a tree of everything the agent *read* as well. "It read fourteen files to make this two-line change" is a coupling insight no chronological view surfaces.
+
 ### Multi-agent fleet view
-Run multiple Claude Code sessions in parallel? TraceBack lists all of them in a dropdown with live status badges (🟢 running, ⚪ done, 🔴 anomalous). Background anomalies surface as a pulsing pill next to the dropdown — you see a failure in agent #3 even while watching agent #1.
+Run multiple Claude Code sessions in parallel? Each gets a distinct identity (color + short tag, so two runs in the same folder never blur together) and a live status. See a failure in agent #3 while watching agent #1.
 
 ### Real token & cost metrics
 Pulls actual token usage from the Claude Code transcript (`input + cache_read + cache_creation + output`) instead of estimating. Falls back to a character-based heuristic when the transcript isn't reachable.
@@ -141,10 +157,10 @@ Connect a Groq or local Ollama instance and TraceBack generates a 1–2 sentence
 Ask questions about the current session directly in the webview. _"Why did the agent fail?"_, _"What files were touched?"_, _"Is this loop intentional?"_ — answered with the timeline already loaded as context.
 
 ### Curated payloads & copy-everything
-Expanded cards show purpose-built views instead of raw dumps: Bash commands with exit pills, file ops with line/byte metrics, web calls as chips, plus a deterministic one-line outcome (`→ Error: Exit code 1 · npm error Missing script`). Raw input/output stays one click away — and everything is copyable: single outputs, single commands, or the **entire session as a markdown report** (`MD` button) ready to paste into a GitHub issue or hand to a fresh agent session as context.
+Expanded cards show purpose-built views instead of raw dumps: Bash commands with exit pills, file ops with line/byte metrics, plus a deterministic one-line outcome that explains known failures in plain English (*"path is a directory — Read only works on files"*). Raw input/output stays one click away, and everything is copyable.
 
 ### Export
-Snapshot the current timeline as a PNG or dump the raw session JSON — useful for bug reports, post-mortems, and sharing with teammates.
+One **Export session** menu, four formats: JSON (the raw session), Markdown (a conversation-shaped post-mortem for a GitHub issue or a handoff to a fresh agent), a self-contained shareable HTML page, or a PNG snapshot.
 
 ### Auto hook management
 TraceBack surgically adds and removes only its own entries in `~/.claude/settings.json` — never touches unrelated config.
@@ -177,8 +193,8 @@ npm run compile && npm run build:webview
 Open the repo in VS Code and press **F5** to launch the Extension Development Host. To install it permanently:
 
 ```bash
-npm run package                           # produces traceback-0.1.0.vsix
-code --install-extension traceback-0.1.0.vsix
+npm run package                           # produces traceback-<version>.vsix
+code --install-extension traceback-*.vsix
 ```
 
 ---
@@ -270,30 +286,32 @@ OLLAMA_MODEL=llama3.2
 ## Architecture
 
 ```
-src/
+src/  (extension host)
 ├── extension.ts        # activation, command registration, LLM wiring
 ├── server.ts           # HTTP server that receives Claude Code hook payloads
-├── traceStore.ts       # session state, node building, batch grouping
-├── anomalyDetector.ts  # pure tail-only detector: repeater / error_thrash / stall
-├── tokenReader.ts      # tails the Claude transcript for real token usage
+├── traceStore.ts       # session state, node building, baseline snapshots
+├── anomalyDetector.ts  # pure tail-only detector (loops / thrash / spiral / scope)
+├── tokenReader.ts      # tails the transcript for tokens, intents, decisions
+├── promptHeuristics.ts # calibrates the todo nudge to prompt substance
 ├── hookManager.ts      # reads/writes ~/.claude/settings.json
-├── llmClient.ts        # Groq + Ollama abstraction
-├── envLoader.ts        # tiny zero-dep .env loader (workspace + extension root)
+├── guardsManager.ts    # policy rules that deny tool calls before execution
+├── sessionArchive.ts   # per-session JSON persistence (history + replay)
 └── webviewProvider.ts  # bridges the extension ↔ React webview
 
-webview/src/
-├── App.tsx                       # fleet state machine, scroll/follow logic
-├── metrics.ts                    # session metrics (duration, tokens, cost)
+webview/src/  (React + Vite)
+├── App.tsx             # one bundle, two surfaces (sidebar / panel)
+├── chapters.ts         # pure: events → prompt chapters + task groups
+├── review.ts           # pure: per-file review annotations (the "why")
+├── fileChanges.ts      # pure: changed/touched files + verification
 └── components/
-    ├── TimelineCard.tsx          # one tool call → one card
-    ├── SessionOdometer.tsx       # sticky metrics bar (time / actions / errors / tokens)
-    ├── SessionPicker.tsx         # multi-session dropdown with status badges
-    ├── DiffViewer.tsx            # LCS line diff for Edit/Write
-    ├── Toolbar.tsx               # LIVE/DONE pill + export/clear buttons
-    └── EmptyState.tsx
+    ├── PromptChapterView.tsx   # the main view: chapters, task & phase blocks
+    ├── ReviewPanel.tsx         # net-change review with diffs + reasoning
+    ├── RightPanel.tsx          # Anomalies / Files / Decisions / Guards tabs
+    ├── DiffViewer.tsx          # LCS line diff
+    └── TimelineCard.tsx        # one tool call → one card
 ```
 
-Extension ↔ webview communicate exclusively over `postMessage` / `onDidReceiveMessage`. No sockets, no shared memory — just clean VS Code API primitives.
+The derivation modules (`chapters.ts`, `review.ts`, `fileChanges.ts`) are pure functions over the event list — which is why replay is nearly free and why they carry the bulk of the test suite.
 
 ---
 
@@ -313,7 +331,7 @@ Press **F5** in VS Code to launch the Extension Development Host with the extens
 
 ### Testing
 
-Unit tests cover the pure modules — the anomaly detector and the trace store — and run on every push via GitHub Actions on Node 20 and 22.
+The pure derivation modules carry the suite — anomaly detector, trace store, chapters, review, file changes, token/decision mining, prompt heuristics — 130+ tests running on every push via GitHub Actions on Node 20 and 22.
 
 ```bash
 npm test           # one-shot
@@ -324,10 +342,10 @@ npm run test:watch # watch mode
 
 ## Roadmap
 
-- **OpenTelemetry GenAI spans.** Emit `gen_ai.*`-tagged spans per session/tool call so TraceBack can forward to Langfuse / Phoenix / Honeycomb while staying the live local viewer.
-- **Beyond Claude Code.** Generic OTLP-shaped adapter so any agent (LangGraph, OpenAI Agents SDK, MCP servers) can stream into TraceBack.
-- **Persistent session history.** Save sessions to disk for post-hoc audit and replay.
-- **Smarter stumbles.** Near-duplicate edits, thrashing on the same file, runaway cost detection.
+- **Beyond Claude Code.** A generic OTLP-shaped adapter so any agent (LangGraph, OpenAI Agents SDK, MCP servers) can stream into the same chapter/review views.
+- **OpenTelemetry GenAI spans.** Emit `gen_ai.*`-tagged spans per session/tool call to forward to Langfuse / Phoenix / Honeycomb while staying the live local viewer.
+- **Review for archived sessions.** Persist baseline snapshots so the net-change review works on history, not just live runs.
+- **LLM-assisted ledger.** An optional pass to catch judgment calls the regex miner misses, still offline-first.
 
 ---
 

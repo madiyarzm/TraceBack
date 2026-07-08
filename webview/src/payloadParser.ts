@@ -83,11 +83,32 @@ function domainOf(url?: string): string | undefined {
   }
 }
 
+/** Does this path look like a directory rather than a file? Heuristic: no
+ *  extension on the last segment (dotfiles like .env still count as files). */
+function looksLikeDirectory(p: string): boolean {
+  const last = p.split('/').filter(Boolean).pop() ?? '';
+  return last !== '' && !last.includes('.');
+}
+
 /**
  * Deterministic one-line outcome for a tool's output — answers "what happened"
- * without dumping the payload. No LLM: shape-matching only.
+ * without dumping the payload. No LLM: shape-matching only. `node` context
+ * (tool + input) lets known failure shapes explain themselves.
  */
-export function summarizeOutput(detail: string | undefined, isError: boolean): string | null {
+export function summarizeOutput(
+  detail: string | undefined,
+  isError: boolean,
+  node?: { toolName?: string; toolInput?: Record<string, unknown> },
+): string | null {
+  // Known stumble: Read on a directory. Explain it instead of "failed".
+  if (isError && node?.toolName === 'Read') {
+    const p = (node.toolInput?.file_path ?? node.toolInput?.path) as string | undefined;
+    const dirError = detail && /EISDIR|is a directory|illegal operation on a directory/i.test(detail);
+    if (dirError || (p && looksLikeDirectory(p) && !detail?.trim())) {
+      return 'path is a directory — Read only works on files (the agent usually retries with ls or glob)';
+    }
+  }
+
   if (!detail || detail.trim().length === 0) return isError ? 'failed, no output' : null;
 
   if (isError) {

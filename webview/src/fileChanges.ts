@@ -98,3 +98,140 @@ export function summarizeChanges(changes: FileChange[]): string {
   if (modified) parts.push(`${modified} modified`);
   return parts.join(' · ');
 }
+
+// ── Touched-map: everything the agent looked at, not just what it changed ────
+
+export interface TouchedFile {
+  path: string;
+  kind: 'read' | 'modified' | 'created';
+}
+
+const READ_TOOLS = new Set(['Read', 'NotebookRead']);
+
+/**
+ * The session's spatial footprint: every file read plus every file changed.
+ * A file that was read AND edited reports its stronger claim (created >
+ * modified > read). "The agent read 14 files to make this 2-line change" is
+ * a coupling insight no chronological view surfaces.
+ */
+export function computeTouched(nodes: TimelineNode[]): TouchedFile[] {
+  const rank = { read: 0, modified: 1, created: 2 } as const;
+  const byPath = new Map<string, TouchedFile['kind']>();
+
+  function record(toolName: string, input?: Record<string, unknown>): void {
+    if (!input) return;
+    const p = (input.file_path ?? input.path ?? input.notebook_path) as string | undefined;
+    if (!p) return;
+    const kind: TouchedFile['kind'] | null =
+      WRITE_TOOLS.has(toolName) ? 'created'
+      : EDIT_TOOLS.has(toolName) ? 'modified'
+      : READ_TOOLS.has(toolName) ? 'read'
+      : null;
+    if (!kind) return;
+    const prev = byPath.get(p);
+    if (!prev || rank[kind] > rank[prev]) byPath.set(p, kind);
+  }
+
+  for (const node of nodes) {
+    if (node.isBatch && node.batchItems) {
+      for (const item of node.batchItems) record(node.toolName, item.toolInput);
+    } else {
+      record(node.toolName, node.toolInput);
+    }
+  }
+
+  return Array.from(byPath.entries())
+    .map(([path, kind]) => ({ path, kind }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** "14 read · 3 modified · 1 created" */
+export function summarizeTouched(touched: TouchedFile[]): string {
+  const counts = { read: 0, modified: 0, created: 0 };
+  for (const t of touched) counts[t.kind]++;
+  const parts: string[] = [];
+  if (counts.read)     parts.push(`${counts.read} read`);
+  if (counts.modified) parts.push(`${counts.modified} modified`);
+  if (counts.created)  parts.push(`${counts.created} created`);
+  return parts.join(' · ');
+}
+
+// ── Verification: was each change exercised after its last edit? ─────────────
+
+/**
+ * verified   — a check command ran after the file's last edit and succeeded
+ * failed     — check commands ran after the last edit but the latest errored
+ * unverified — nothing that looks like a check ran after the last edit
+ *
+ * Deliberately evidence-based: the agent saying "done" counts for nothing;
+ * only a command with an exit code does.
+ */
+export type VerifyStatus = 'verified' | 'failed' | 'unverified';
+
+const CHECK_COMMAND = new RegExp(
+  '\\b(test|spec|vitest|jest|pytest|unittest|tsc|typecheck|build|compile|' +
+  'lint|eslint|ruff|mypy|check|vet|fmt|verify)\\b', 'i'
+);
+
+function isCheckCommand(command: string, basename: string): boolean {
+  return CHECK_COMMAND.test(command) || (basename.length > 3 && command.includes(basename));
+}
+
+/**
+ * Node-list order is chronological, so "after the last edit" is an index
+ * comparison; batch items share their batch node's position.
+ */
+export function verifyChanges(nodes: TimelineNode[]): Map<string, VerifyStatus> {
+  const lastEditIdx = new Map<string, number>();
+  const bashRuns: { idx: number; command: string; error: boolean; pending: boolean }[] = [];
+
+  nodes.forEach((node, idx) => {
+    const items = node.isBatch && node.batchItems ? node.batchItems : [node];
+    for (const item of items) {
+      const input = item.toolInput;
+      if (!input) continue;
+      if (WRITE_TOOLS.has(node.toolName) || EDIT_TOOLS.has(node.toolName)) {
+        const p = (input.file_path ?? input.path ?? input.notebook_path) as string | undefined;
+        if (p) lastEditIdx.set(p, idx);
+      } else if (node.toolName === 'Bash' && typeof input.command === 'string') {
+        bashRuns.push({
+          idx,
+          command: input.command,
+          error:   item.status === 'error',
+          pending: item.status === 'pending',
+        });
+      }
+    }
+  });
+
+  const out = new Map<string, VerifyStatus>();
+  for (const [path, editIdx] of lastEditIdx) {
+    const basename = path.split('/').filter(Boolean).pop() ?? '';
+    const checks = bashRuns.filter(
+      (r) => r.idx > editIdx && !r.pending && isCheckCommand(r.command, basename)
+    );
+    if (checks.length === 0) {
+      out.set(path, 'unverified');
+    } else {
+      out.set(path, checks[checks.length - 1].error ? 'failed' : 'verified');
+    }
+  }
+  return out;
+}
+
+/** "2 of 5 changed files never exercised after their last edit" — '' when clean. */
+export function summarizeVerification(statuses: Map<string, VerifyStatus>): string {
+  const total = statuses.size;
+  if (total === 0) return '';
+  let unverified = 0, failed = 0;
+  for (const s of statuses.values()) {
+    if (s === 'unverified') unverified++;
+    if (s === 'failed') failed++;
+  }
+  const parts: string[] = [];
+  if (unverified > 0)
+    parts.push(`${unverified} of ${total} changed file${total === 1 ? '' : 's'} never exercised after the last edit`);
+  if (failed > 0)
+    parts.push(`${failed} failing the latest check`);
+  return parts.join(' · ');
+}

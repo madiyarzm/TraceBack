@@ -30,6 +30,7 @@ export interface ArchivedSession extends ArchivedSessionMeta {
   aiSummary?:      string;
   cwd?:            string;
   plan?:           TraceSession['plan'];
+  ledger?:         TraceSession['ledger'];
 }
 
 function fileFor(dir: string, id: string): string {
@@ -54,6 +55,7 @@ export function serializeSession(session: TraceSession): ArchivedSession {
     aiSummary:    session.aiSummary,
     cwd:          session.cwd,
     plan:         session.plan,
+    ledger:       session.ledger,
   };
 }
 

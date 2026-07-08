@@ -2,19 +2,10 @@ import * as http from 'http';
 import * as vscode from 'vscode';
 import { traceStore, TraceEvent, EventKind } from './traceStore';
 import { checkGuards } from './guardsManager';
+import { todoInstructionFor } from './promptHeuristics';
 
 let _server: http.Server | null = null;
 let _outputChannel: vscode.OutputChannel;
-
-/**
- * Standing instruction injected into every user prompt via the
- * UserPromptSubmit hook's `additionalContext`. Guarantees a todo breakdown
- * exists so the prompt-chapter view always has task blocks to render.
- */
-const TODO_INSTRUCTION =
-  'Before starting work, create a todo list breaking this task into ' +
-  'specific steps using the todo/task tools. Even for small tasks, ' +
-  'create at least one todo item.';
 
 export function startServer(outputChannel: vscode.OutputChannel, port: number): void {
   _outputChannel = outputChannel;
@@ -25,13 +16,13 @@ export function startServer(outputChannel: vscode.OutputChannel, port: number): 
   }
 
   _server = http.createServer((req, res) => {
-    // Allow CORS for any local webview requests
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204);
+    // Drive-by defense. This endpoint only ever receives curl from Claude Code
+    // hooks, which never set an Origin header. A browser making a cross-origin
+    // request always does — so any request carrying Origin is a web page (a
+    // malicious site probing localhost) and is refused. No CORS headers are
+    // sent, so even a permitted request's response stays unreadable to scripts.
+    if (req.headers.origin !== undefined) {
+      res.writeHead(403);
       res.end();
       return;
     }
@@ -44,19 +35,23 @@ export function startServer(outputChannel: vscode.OutputChannel, port: number): 
           const payload = JSON.parse(body);
           const event = handleHookPayload(payload);
 
-          // UserPromptSubmit: inject a standing instruction so every task opens
-          // with a todo breakdown. This is what gives the prompt-chapter view
-          // its task blocks — Claude Code merges `additionalContext` into the
-          // prompt before the model sees it.
+          // UserPromptSubmit: nudge toward a todo breakdown, calibrated to the
+          // prompt's substance — nothing for continuations, a soft suggestion
+          // for medium prompts, a firm ask (incl. in_progress marking, which
+          // is what makes plan attribution work) for multi-part requests.
+          // Claude Code merges `additionalContext` into the prompt.
           if (event && event.kind === 'user_prompt') {
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-              hookSpecificOutput: {
-                hookEventName:     'UserPromptSubmit',
-                additionalContext: TODO_INSTRUCTION,
-              },
-            }));
-            return;
+            const instruction = todoInstructionFor(event.toolResponse ?? '');
+            if (instruction) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                hookSpecificOutput: {
+                  hookEventName:     'UserPromptSubmit',
+                  additionalContext: instruction,
+                },
+              }));
+              return;
+            }
           }
 
           // Guards: policy rules checked BEFORE execution. A match denies the

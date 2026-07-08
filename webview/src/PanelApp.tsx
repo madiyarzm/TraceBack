@@ -4,9 +4,10 @@ import EmptyState from './components/EmptyState';
 import FileChangesPanel from './components/FileChangesPanel';
 import PromptList from './components/PromptList';
 import PromptChapterView from './components/PromptChapterView';
+import ReviewPanel from './components/ReviewPanel';
 import RightPanel from './components/RightPanel';
 import { formatDuration } from './components/TimelineCard';
-import { AlertIcon, CheckIcon, FileIcon } from './components/Icons';
+import { AlertIcon } from './components/Icons';
 import { agentIdentity } from './codename';
 import { anomaliesFor, computeChapters } from './chapters';
 import { useSessionFeed, FullSessionData, ArchivedMeta } from './useSessionFeed';
@@ -38,8 +39,22 @@ export default function PanelApp() {
   const anomaly    = archived ? undefined : display?.anomaly;
   const records    = display?.anomalyHistory ?? [];
 
+  // ── Replay: step through the session as it happened ──
+  // A cursor over the real (non-thinking) nodes; every derived view below is
+  // computed from the sliced list, so the whole UI time-travels together.
+  const replayNodes = useMemo(
+    () => traceNodes.filter((n) => n.toolName !== '__thinking__'),
+    [traceNodes],
+  );
+  const [replayCursor, setReplayCursor] = useState<number | null>(null);
+  useEffect(() => setReplayCursor(null), [display?.id]);
+  const replayActive = replayCursor !== null && !isLive;
+  const effectiveNodes = replayActive
+    ? replayNodes.slice(0, replayCursor)
+    : traceNodes;
+
   // ── Prompt chapters ──
-  const chapters = useMemo(() => computeChapters(traceNodes), [traceNodes]);
+  const chapters = useMemo(() => computeChapters(effectiveNodes), [effectiveNodes]);
   const anomalyCounts = useMemo(() => {
     const map = new Map<number, number>();
     for (const c of chapters) map.set(c.index, anomaliesFor(c, records).length);
@@ -49,11 +64,56 @@ export default function PanelApp() {
   // Focused chapter: user-picked, else follow the latest prompt.
   const [pickedChapter, setPickedChapter] = useState<number | null>(null);
   useEffect(() => setPickedChapter(null), [display?.id]); // reset per session
+
+  // Net-change review mode: replaces the chapter body in the main column.
+  const [reviewOpen, setReviewOpen] = useState(false);
+  useEffect(() => setReviewOpen(false), [display?.id]);
+  const hasEdits = useMemo(
+    () => traceNodes.some((n) =>
+      ['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'FileWrite'].includes(n.toolName)),
+    [traceNodes],
+  );
+  function openReview() {
+    feed.requestReview();
+    setReviewOpen(true);
+  }
   const selectedIndex =
-    pickedChapter !== null && pickedChapter <= chapters.length
+    replayActive ? chapters.length   // replay always follows the moving edge
+    : pickedChapter !== null && pickedChapter <= chapters.length
       ? pickedChapter
       : chapters.length;
   const selectedChapter = chapters.find((c) => c.index === selectedIndex) ?? null;
+
+  // ── Replay transport ──
+  const [replayPlaying, setReplayPlaying] = useState(false);
+  const [replaySpeed, setReplaySpeed]     = useState(1);
+  useEffect(() => {
+    if (!replayActive || !replayPlaying) return;
+    const t = setInterval(() => {
+      setReplayCursor((c) => {
+        if (c === null || c >= replayNodes.length) { setReplayPlaying(false); return c; }
+        return c + 1;
+      });
+    }, 900 / replaySpeed);
+    return () => clearInterval(t);
+  }, [replayActive, replayPlaying, replaySpeed, replayNodes.length]);
+
+  useEffect(() => {
+    if (!replayActive) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'ArrowRight') setReplayCursor((c) => Math.min((c ?? 0) + 1, replayNodes.length));
+      if (e.key === 'ArrowLeft')  setReplayCursor((c) => Math.max((c ?? 1) - 1, 1));
+      if (e.key === 'Escape')     setReplayCursor(null);
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [replayActive, replayNodes.length]);
+
+  function toggleReplay() {
+    setReviewOpen(false);
+    setReplayPlaying(false);
+    setReplayCursor((c) => (c === null ? Math.min(1, replayNodes.length) : null));
+  }
 
   // Archived metas whose session isn't currently live (avoid double listing)
   const liveIds     = new Set(sessions.map((s) => s.id));
@@ -93,10 +153,20 @@ export default function PanelApp() {
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}>
               {display ? agentIdentity(display.id).name : 'TraceBack'}
+              {display && (
+                <span style={{
+                  fontSize: 11.5, fontWeight: 500,
+                  fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+                  color: 'var(--tb-text-dim)', marginLeft: 7,
+                  letterSpacing: '0.04em',
+                }}>
+                  {agentIdentity(display.id).tag}
+                </span>
+              )}
             </div>
             {display && (
               <div style={{
-                fontSize: 11.5, color: 'var(--tb-text-muted)', marginTop: 2,
+                fontSize: 12.5, color: 'var(--tb-text-muted)', marginTop: 2,
                 overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>
                 {display.label}
@@ -148,7 +218,7 @@ export default function PanelApp() {
           )}
 
           {sessions.length === 0 && pastEntries.length === 0 && (
-            <div style={{ padding: '10px 14px', fontSize: 10.5, color: 'var(--tb-text-dim)', lineHeight: 1.5 }}>
+            <div style={{ padding: '10px 14px', fontSize: 11.5, color: 'var(--tb-text-dim)', lineHeight: 1.5 }}>
               No sessions yet. Start Claude Code in a terminal and its actions stream in here.
             </div>
           )}
@@ -162,13 +232,12 @@ export default function PanelApp() {
             padding: 12,
             display: 'flex', flexDirection: 'column', gap: 8,
           }}>
-            <RailButton onClick={feed.exportJson} icon={<DownloadIcon size={15} />}>
-              Export session
-            </RailButton>
-            <CopyRailButton onCopy={feed.copyReport} />
-            <RailButton onClick={feed.exportHtml} icon={<ShareIcon size={15} />}>
-              Share as HTML
-            </RailButton>
+            <ExportMenu
+              onJson={feed.exportJson}
+              onMarkdown={feed.copyReport}
+              onHtml={feed.exportHtml}
+              onPng={feed.exportPng}
+            />
           </div>
         )}
       </div>
@@ -185,7 +254,7 @@ export default function PanelApp() {
         }}>
           {archived && (
             <span style={{
-              fontSize: 9, fontWeight: 700, letterSpacing: '0.06em',
+              fontSize: 10, fontWeight: 700, letterSpacing: '0.06em',
               color: 'var(--tb-text-muted)',
               border: '1px solid var(--tb-border-2)',
               borderRadius: 3, padding: '1px 6px',
@@ -195,6 +264,17 @@ export default function PanelApp() {
             </span>
           )}
           <div style={{ flex: 1 }} />
+          {hasData && !isLive && (
+            <HeaderToggle
+              label={replayActive ? 'exit replay' : 'replay'}
+              active={replayActive}
+              title="Step through the session as it happened (←/→ keys)"
+              onClick={toggleReplay}
+            />
+          )}
+          {hasData && !archived && hasEdits && !replayActive && (
+            <ReviewButton active={reviewOpen} onClick={() => reviewOpen ? setReviewOpen(false) : openReview()} />
+          )}
           {hasData && !archived && (
             <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
               <ClearPanelButton onClear={feed.clear} />
@@ -218,7 +298,14 @@ export default function PanelApp() {
             }}>
               {/* ── Main column: fills all available width ── */}
               <div style={{ flex: 1, minWidth: 0 }}>
-                {selectedChapter && (
+                {reviewOpen ? (
+                  <ReviewPanel
+                    files={feed.reviewFiles}
+                    nodes={traceNodes}
+                    clickable={!archived}
+                    onClose={() => setReviewOpen(false)}
+                  />
+                ) : selectedChapter && (
                   <PromptChapterView
                     chapter={selectedChapter}
                     isLive={isLive && selectedIndex === chapters.length}
@@ -233,7 +320,26 @@ export default function PanelApp() {
                   />
                 )}
 
-                {!wide && <FileChangesPanel nodes={traceNodes} defaultOpen clickable={!archived} />}
+                {!wide && <FileChangesPanel nodes={effectiveNodes} defaultOpen clickable={!archived} />}
+
+                {replayActive && (
+                  <ReplayBar
+                    cursor={replayCursor ?? 0}
+                    total={replayNodes.length}
+                    playing={replayPlaying}
+                    speed={replaySpeed}
+                    currentLabel={
+                      replayCursor
+                        ? `${replayNodes[replayCursor - 1]?.toolName ?? ''} — ${replayNodes[replayCursor - 1]?.label ?? ''}`
+                        : ''
+                    }
+                    onStep={(d) => setReplayCursor((c) =>
+                      Math.max(1, Math.min((c ?? 1) + d, replayNodes.length)))}
+                    onJump={(to) => setReplayCursor(Math.max(1, Math.min(to, replayNodes.length)))}
+                    onPlayToggle={() => setReplayPlaying((v) => !v)}
+                    onSpeed={() => setReplaySpeed((s) => (s === 4 ? 1 : s * 2))}
+                  />
+                )}
               </div>
 
               {/* ── Right panel (wide screens): Anomalies / Files / Guards ── */}
@@ -247,10 +353,11 @@ export default function PanelApp() {
                   background: 'var(--tb-surface)',
                 }}>
                   <RightPanel
-                    nodes={traceNodes}
+                    nodes={effectiveNodes}
                     chapters={chapters}
                     selectedIndex={selectedIndex}
                     records={records}
+                    ledger={display?.ledger ?? []}
                     filesClickable={!archived}
                     guards={feed.guards}
                     onSetGuard={feed.setGuard}
@@ -262,7 +369,7 @@ export default function PanelApp() {
             </div>
           )}
 
-          {anomaly?.isAnomalous && (
+          {anomaly?.isAnomalous && anomaly.type !== 'stall' && (
             <div style={{
               position: 'fixed', inset: 0,
               background: 'radial-gradient(ellipse at center, rgba(248,81,73,0.07) 0%, rgba(248,81,73,0.02) 60%, transparent 100%)',
@@ -282,7 +389,7 @@ function RailLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
       padding: '12px 14px 5px',
-      fontSize: 9, fontWeight: 700,
+      fontSize: 10, fontWeight: 700,
       letterSpacing: '0.1em', textTransform: 'uppercase',
       color: 'var(--tb-text-dim)',
     }}>{children}</div>
@@ -292,12 +399,11 @@ function RailLabel({ children }: { children: React.ReactNode }) {
 function railCardStyle(active: boolean, hovered: boolean): React.CSSProperties {
   return {
     margin: '0 8px 4px',
-    padding: '7px 10px',
-    borderRadius: 5,
-    border: `1px solid ${active ? 'var(--tb-border-2)' : 'transparent'}`,
-    background: active ? 'var(--tb-surface-2)' : hovered ? 'rgba(22,27,34,0.6)' : 'transparent',
+    padding: '8px 11px',
+    borderRadius: 6,
+    background: active ? 'var(--tb-surface-2)' : hovered ? 'rgba(22,27,34,0.55)' : 'transparent',
     cursor: 'pointer',
-    transition: 'background 0.1s, border-color 0.1s',
+    transition: 'background 0.12s ease, box-shadow 0.12s ease',
   };
 }
 
@@ -305,7 +411,8 @@ function SessionRailCard({ session, active, onClick }: {
   session: FullSessionData; active: boolean; onClick: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
-  const anomalous = !!session.anomaly?.isAnomalous;
+  // A stall is a waiting state, not an alarm — keep the rail dot calm for it.
+  const anomalous = !!session.anomaly?.isAnomalous && session.anomaly?.type !== 'stall';
   const live = !session.stopped;
   const identity = agentIdentity(session.id);
 
@@ -316,7 +423,7 @@ function SessionRailCard({ session, active, onClick }: {
       onMouseLeave={() => setHovered(false)}
       style={{
         ...railCardStyle(active, hovered),
-        borderLeft: `2px solid ${active ? identity.color : 'transparent'}`,
+        boxShadow: active ? `inset 2.5px 0 0 ${identity.color}` : 'none',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
@@ -329,17 +436,24 @@ function SessionRailCard({ session, active, onClick }: {
           }}
         />
         <span style={{
-          fontSize: 11.5, fontWeight: active ? 600 : 400,
+          fontSize: 13.5, fontWeight: active ? 600 : 400,
           color: identity.color,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           flex: 1, minWidth: 0,
         }}>
           {identity.name}
+          <span style={{
+            fontSize: 11, fontWeight: 500,
+            fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+            color: 'var(--tb-text-dim)', marginLeft: 6,
+          }}>
+            {identity.tag}
+          </span>
         </span>
         {anomalous && <span style={{ color: '#f85149', display: 'flex' }}><AlertIcon size={10} /></span>}
       </div>
       <div style={{
-        fontSize: 9.5, color: 'var(--tb-text-muted)', paddingLeft: 13, marginTop: 1,
+        fontSize: 10.5, color: 'var(--tb-text-muted)', paddingLeft: 13, marginTop: 1,
         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
       }}>
         {session.label} · {session.nodeCount} actions{live ? ' · live' : ''}
@@ -363,7 +477,7 @@ function HistoryRailCard({ meta, active, onClick }: {
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
         <span style={{
-          fontSize: 11.5, fontWeight: active ? 600 : 400,
+          fontSize: 13.5, fontWeight: active ? 600 : 400,
           color: 'var(--tb-text-muted)',
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           flex: 1, minWidth: 0,
@@ -371,16 +485,22 @@ function HistoryRailCard({ meta, active, onClick }: {
           <span style={{ color: agentIdentity(meta.id).color, opacity: 0.75 }}>
             {agentIdentity(meta.id).name}
           </span>
+          <span style={{
+            fontSize: 11, fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+            color: 'var(--tb-text-dim)', marginLeft: 5,
+          }}>
+            {agentIdentity(meta.id).tag}
+          </span>
           {' '}· {meta.label}
         </span>
         {meta.errorCount > 0 && (
-          <span style={{ fontSize: 9, color: '#f85149' }}>{meta.errorCount}✕</span>
+          <span style={{ fontSize: 10, color: '#f85149' }}>{meta.errorCount}✕</span>
         )}
         {meta.anomalyCount > 0 && (
           <span style={{ color: '#d29922', display: 'flex' }}><AlertIcon size={10} /></span>
         )}
       </div>
-      <div style={{ fontSize: 9.5, color: 'var(--tb-text-dim)', marginTop: 1 }}>
+      <div style={{ fontSize: 10.5, color: 'var(--tb-text-dim)', marginTop: 1 }}>
         {new Date(meta.startedAt).toLocaleDateString()} · {meta.nodeCount} actions{dur ? ` · ${dur}` : ''}
       </div>
     </div>
@@ -389,48 +509,142 @@ function HistoryRailCard({ meta, active, onClick }: {
 
 // ── Buttons ─────────────────────────────────────────────────────────────────
 
-function RailButton({ children, onClick, icon }: {
-  children: React.ReactNode; onClick: () => void; icon?: React.ReactNode;
+
+/**
+ * One export entry point: a rail button opening an upward menu with the four
+ * formats. Markdown copies (with inline confirmation); the rest download.
+ */
+function ExportMenu({ onJson, onMarkdown, onHtml, onPng }: {
+  onJson: () => void;
+  onMarkdown: () => Promise<void>;
+  onHtml: () => void;
+  onPng: () => void;
 }) {
+  const [open, setOpen]     = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  function run(action: () => void) {
+    action();
+    setOpen(false);
+  }
+
+  async function runMarkdown() {
+    await onMarkdown();
+    setCopied(true);
+    setTimeout(() => { setCopied(false); setOpen(false); }, 900);
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 30 }}
+        />
+      )}
+
+      {open && (
+        <div style={{
+          position: 'absolute', bottom: 'calc(100% + 6px)', left: 0, right: 0,
+          zIndex: 31,
+          background: 'var(--tb-surface-2)',
+          border: '1px solid var(--tb-border-2)',
+          borderRadius: 8,
+          boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+          overflow: 'hidden',
+          animation: 'cardBodyIn 0.12s ease-out',
+        }}>
+          <ExportMenuItem label="JSON file"       hint=".json"  onClick={() => run(onJson)} />
+          <ExportMenuItem
+            label={copied ? 'Copied to clipboard' : 'Markdown report'}
+            hint={copied ? '✓' : 'copy'}
+            onClick={() => void runMarkdown()}
+          />
+          <ExportMenuItem label="Shareable HTML"  hint=".html" onClick={() => run(onHtml)} />
+          <ExportMenuItem label="PNG snapshot"    hint=".png"  onClick={() => run(onPng)} />
+        </div>
+      )}
+
+      <ExportTrigger open={open} onClick={() => setOpen((v) => !v)} />
+    </div>
+  );
+}
+
+function ExportTrigger({ open, onClick }: { open: boolean; onClick: () => void }) {
   const [hovered, setHovered] = useState(false);
+  const lit = open || hovered;
   return (
     <button
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        display: 'flex', alignItems: 'center', gap: 10,
-        width: '100%',
-        fontSize: 12, fontFamily: 'var(--tb-ui-font)', fontWeight: 550,
-        padding: '10px 13px', cursor: 'pointer',
+        display: 'flex', alignItems: 'center', gap: 9,
+        width: '100%', boxSizing: 'border-box',
+        padding: '9px 12px',
+        fontSize: 13, fontWeight: 600, fontFamily: 'var(--tb-ui-font)',
         textAlign: 'left',
-        background: hovered ? 'rgba(88,166,255,0.08)' : 'var(--tb-surface-2)',
-        color: hovered ? 'var(--tb-blue)' : 'var(--tb-text)',
-        border: `1px solid ${hovered ? 'rgba(88,166,255,0.4)' : 'var(--tb-border)'}`,
+        background: lit ? 'var(--tb-surface-2)' : 'transparent',
+        color: lit ? 'var(--tb-text)' : 'var(--tb-text-muted)',
+        border: `1px solid ${open ? 'var(--tb-border-2)' : 'var(--tb-border)'}`,
         borderRadius: 8,
-        transition: 'color 0.1s, border-color 0.1s, background 0.1s',
-        whiteSpace: 'nowrap',
+        cursor: 'pointer',
+        transition: 'background 0.12s ease, color 0.12s ease, border-color 0.12s ease',
       }}
     >
-      {icon && <span style={{ display: 'flex', flexShrink: 0, opacity: 0.85 }}>{icon}</span>}
-      <span>{children}</span>
+      <span style={{ display: 'flex', flexShrink: 0, opacity: 0.85 }}>
+        <DownloadIcon size={14} />
+      </span>
+      <span style={{ flex: 1, minWidth: 0 }}>Export session</span>
+      <span style={{
+        display: 'flex', flexShrink: 0,
+        color: 'var(--tb-text-dim)',
+        transform: open ? 'rotate(180deg)' : 'none',
+        transition: 'transform 0.18s ease',
+      }}>
+        <ChevronUpGlyph />
+      </span>
     </button>
   );
 }
 
-function CopyRailButton({ onCopy }: { onCopy: () => Promise<void> }) {
-  const [copied, setCopied] = useState(false);
+function ChevronUpGlyph() {
   return (
-    <RailButton
-      icon={copied ? <CheckIcon size={15} /> : <FileIcon size={15} />}
-      onClick={async () => {
-        await onCopy();
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1200);
+    <svg width={11} height={11} viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"
+         style={{ display: 'block' }}>
+      <path d="m18 15-6-6-6 6" />
+    </svg>
+  );
+}
+
+function ExportMenuItem({ label, hint, onClick }: {
+  label: string; hint: string; onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '9px 12px',
+        fontSize: 13.5, fontFamily: 'var(--tb-ui-font)', fontWeight: 500,
+        color: hovered ? 'var(--tb-text)' : 'var(--tb-text-muted)',
+        background: hovered ? 'rgba(88,166,255,0.08)' : 'transparent',
+        cursor: 'pointer',
+        transition: 'background 0.1s ease, color 0.1s ease',
       }}
     >
-      {copied ? 'Copied to clipboard' : 'Markdown report'}
-    </RailButton>
+      <span style={{ flex: 1 }}>{label}</span>
+      <span style={{
+        fontSize: 11, fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+        color: 'var(--tb-text-dim)',
+      }}>
+        {hint}
+      </span>
+    </div>
   );
 }
 
@@ -446,16 +660,112 @@ function DownloadIcon({ size = 15 }: { size?: number }) {
   );
 }
 
-function ShareIcon({ size = 15 }: { size?: number }) {
+
+function HeaderToggle({ label, active, title, onClick }: {
+  label: string; active: boolean; title: string; onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const accent = '#a371f7'; // replay = time travel, keep it distinct from blue
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
-         style={{ display: 'block' }}>
-      <circle cx="18" cy="5" r="3" />
-      <circle cx="6" cy="12" r="3" />
-      <circle cx="18" cy="19" r="3" />
-      <path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" />
-    </svg>
+    <button
+      title={title}
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        fontSize: 11.5, fontFamily: 'var(--tb-ui-font)', fontWeight: 600,
+        padding: '3px 10px', cursor: 'pointer', marginRight: 4,
+        background: active ? `${accent}1f` : hovered ? `${accent}12` : 'transparent',
+        color: active || hovered ? accent : 'var(--tb-text-muted)',
+        border: `1px solid ${active ? `${accent}88` : hovered ? `${accent}55` : 'var(--tb-border)'}`,
+        borderRadius: 3,
+        transition: 'color 0.1s, border-color 0.1s, background 0.1s',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** Sticky transport bar for replay: step / play / speed, with the current
+ *  action named so the viewer can predict-then-check. */
+function ReplayBar({ cursor, total, playing, speed, currentLabel, onStep, onJump, onPlayToggle, onSpeed }: {
+  cursor: number; total: number; playing: boolean; speed: number; currentLabel: string;
+  onStep: (delta: number) => void;
+  onJump: (to: number) => void;
+  onPlayToggle: () => void;
+  onSpeed: () => void;
+}) {
+  const btn: React.CSSProperties = {
+    background: 'transparent',
+    border: '1px solid var(--tb-border-2)',
+    borderRadius: 6,
+    color: 'var(--tb-text)',
+    fontSize: 13, fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+    padding: '5px 10px', cursor: 'pointer',
+    lineHeight: 1,
+  };
+  return (
+    <div style={{
+      position: 'sticky', bottom: 0, zIndex: 5,
+      display: 'flex', alignItems: 'center', gap: 8,
+      padding: '10px 16px',
+      background: 'var(--tb-surface)',
+      borderTop: '1px solid var(--tb-border-2)',
+      fontFamily: 'var(--tb-ui-font)',
+    }}>
+      <button style={btn} title="Jump to start" onClick={() => onJump(1)}>⏮</button>
+      <button style={btn} title="Previous step (←)" onClick={() => onStep(-1)}>◀</button>
+      <button
+        style={{ ...btn, color: '#a371f7', borderColor: '#a371f788', minWidth: 34 }}
+        title={playing ? 'Pause' : 'Auto-play'}
+        onClick={onPlayToggle}
+      >
+        {playing ? '❚❚' : '▶'}
+      </button>
+      <button style={btn} title="Next step (→)" onClick={() => onStep(1)}>▶▶</button>
+      <button style={btn} title="Jump to end" onClick={() => onJump(total)}>⏭</button>
+      <button style={btn} title="Playback speed" onClick={onSpeed}>{speed}×</button>
+      <span style={{
+        fontSize: 12, fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+        color: 'var(--tb-text-muted)', flexShrink: 0,
+      }}>
+        {cursor} / {total}
+      </span>
+      <span style={{
+        fontSize: 12.5, color: 'var(--tb-text)',
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        minWidth: 0,
+      }}>
+        {currentLabel}
+      </span>
+    </div>
+  );
+}
+
+function ReviewButton({ active, onClick }: { active: boolean; onClick: () => void }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <button
+      title="Net effect of this session: baseline → now diff per file, with reasoning"
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        fontSize: 11.5, fontFamily: 'var(--tb-ui-font)', fontWeight: 600,
+        padding: '3px 10px', cursor: 'pointer',
+        background: active ? 'rgba(88,166,255,0.12)' : hovered ? 'rgba(88,166,255,0.07)' : 'transparent',
+        color: active || hovered ? 'var(--tb-blue)' : 'var(--tb-text-muted)',
+        border: `1px solid ${active ? 'rgba(88,166,255,0.55)' : hovered ? 'rgba(88,166,255,0.35)' : 'var(--tb-border)'}`,
+        borderRadius: 3,
+        transition: 'color 0.1s, border-color 0.1s, background 0.1s',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {active ? 'timeline' : 'review changes'}
+    </button>
   );
 }
 
@@ -478,7 +788,7 @@ function ClearPanelButton({ onClear }: { onClear: () => void }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
-        fontSize: 10, fontFamily: 'var(--tb-ui-font)',
+        fontSize: 11, fontFamily: 'var(--tb-ui-font)',
         fontWeight: confirming ? 700 : 500,
         padding: '3px 9px', cursor: 'pointer',
         background: confirming ? 'rgba(248,81,73,0.12)' : hovered ? 'rgba(248,81,73,0.07)' : 'transparent',

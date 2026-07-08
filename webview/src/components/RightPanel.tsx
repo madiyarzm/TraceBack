@@ -2,16 +2,17 @@ import { useState } from 'react';
 import FileChangesPanel from './FileChangesPanel';
 import { TimelineNode } from './TimelineCard';
 import { anomaliesFor, PromptChapter } from '../chapters';
-import { AnomalyRecordUI, BuiltinGuardUI, GuardsStateUI } from '../useSessionFeed';
-import { AlertIcon, ChevronIcon, ClockIcon } from './Icons';
+import { AnomalyRecordUI, BuiltinGuardUI, GuardsStateUI, LedgerItemUI } from '../useSessionFeed';
+import { AlertIcon, BranchIcon, ChevronIcon, ClockIcon, QuestionIcon } from './Icons';
 
-type Tab = 'anomalies' | 'files' | 'guards';
+type Tab = 'anomalies' | 'files' | 'decisions' | 'guards';
 
 interface Props {
   nodes:          TimelineNode[];
   chapters:       PromptChapter[];
   selectedIndex:  number;
   records:        AnomalyRecordUI[];
+  ledger:         LedgerItemUI[];
   filesClickable: boolean;
   guards:         GuardsStateUI;
   onSetGuard:     (key: string, enabled: boolean) => void;
@@ -21,7 +22,8 @@ interface Props {
 
 /**
  * Right panel: Anomalies (per-prompt evidence trail), Files (what changed on
- * disk), Guards (the policy rules that auto-deny tool calls).
+ * disk), Decisions (judgment calls mined from the transcript), Guards (the
+ * policy rules that auto-deny tool calls).
  */
 export default function RightPanel(props: Props) {
   const [tab, setTab] = useState<Tab>('anomalies');
@@ -34,19 +36,28 @@ export default function RightPanel(props: Props) {
       fontFamily: 'var(--tb-ui-font)',
     }}>
       <div style={{
-        display: 'flex', flexShrink: 0,
+        display: 'flex', alignItems: 'stretch', gap: 2, flexShrink: 0,
+        padding: '0 8px',
         borderBottom: '1px solid var(--tb-border)',
         background: 'var(--tb-surface)',
+        overflowX: 'auto',
       }}>
-        <TabButton active={tab === 'anomalies'} onClick={() => setTab('anomalies')}>
-          Anomalies{anomalyTotal > 0 ? ` ${anomalyTotal}` : ''}
-        </TabButton>
-        <TabButton active={tab === 'files'} onClick={() => setTab('files')}>
-          Files
-        </TabButton>
-        <TabButton active={tab === 'guards'} onClick={() => setTab('guards')}>
-          Guards
-        </TabButton>
+        <TabButton
+          active={tab === 'anomalies'} onClick={() => setTab('anomalies')}
+          label="Anomalies" count={anomalyTotal} countColor="#f85149"
+        />
+        <TabButton
+          active={tab === 'files'} onClick={() => setTab('files')}
+          label="Files"
+        />
+        <TabButton
+          active={tab === 'decisions'} onClick={() => setTab('decisions')}
+          label="Decisions" count={props.ledger.length}
+        />
+        <TabButton
+          active={tab === 'guards'} onClick={() => setTab('guards')}
+          label="Guards"
+        />
       </div>
 
       <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
@@ -59,6 +70,9 @@ export default function RightPanel(props: Props) {
         )}
         {tab === 'files' && (
           <FileChangesPanel nodes={props.nodes} defaultOpen clickable={props.filesClickable} />
+        )}
+        {tab === 'decisions' && (
+          <DecisionsTab chapters={props.chapters} ledger={props.ledger} />
         )}
         {tab === 'guards' && (
           <GuardsTab
@@ -73,27 +87,130 @@ export default function RightPanel(props: Props) {
   );
 }
 
-function TabButton({ active, onClick, children }: {
-  active: boolean; onClick: () => void; children: React.ReactNode;
+function TabButton({ active, onClick, label, count = 0, countColor }: {
+  active: boolean; onClick: () => void; label: string;
+  count?: number; countColor?: string;
 }) {
+  const [hovered, setHovered] = useState(false);
   return (
     <button
       onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
-        flex: 1,
-        fontSize: 10.5, fontWeight: active ? 700 : 400,
+        display: 'flex', alignItems: 'center', gap: 6,
+        fontSize: 12.5, fontWeight: active ? 600 : 450,
         fontFamily: 'var(--tb-ui-font)',
-        padding: '8px 4px',
+        padding: '10px 10px 9px',
         cursor: 'pointer',
         background: 'transparent',
-        color: active ? 'var(--tb-text)' : 'var(--tb-text-muted)',
+        color: active || hovered ? 'var(--tb-text)' : 'var(--tb-text-muted)',
         border: 'none',
-        borderBottom: `2px solid ${active ? 'var(--tb-blue)' : 'transparent'}`,
-        transition: 'color 0.1s, border-color 0.1s',
+        boxShadow: active ? 'inset 0 -2px 0 var(--tb-blue)' : 'inset 0 -2px 0 transparent',
+        transition: 'color 0.12s ease, box-shadow 0.15s ease',
+        whiteSpace: 'nowrap',
       }}
     >
-      {children}
+      {label}
+      {count > 0 && (
+        <span style={{
+          fontSize: 10, fontWeight: 650, lineHeight: 1,
+          fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
+          color: countColor ?? 'var(--tb-text-muted)',
+          background: countColor ? `${countColor}1a` : 'var(--tb-surface-2)',
+          border: `1px solid ${countColor ? `${countColor}44` : 'var(--tb-border-2)'}`,
+          borderRadius: 8, padding: '2px 6px',
+        }}>
+          {count}
+        </span>
+      )}
     </button>
+  );
+}
+
+// ─── Decisions ────────────────────────────────────────────────────────────────
+
+/**
+ * The judgment calls the agent made in prose — decisions ("instead of…",
+ * "went with…") and assumptions ("I'll assume…") — grouped by the prompt
+ * whose time slice they fell into. This is where sessions silently go wrong;
+ * an assumption caught live is a Redirect before it calcifies.
+ */
+function DecisionsTab({ chapters, ledger }: {
+  chapters: PromptChapter[]; ledger: LedgerItemUI[];
+}) {
+  if (ledger.length === 0) {
+    return (
+      <div style={{ padding: '14px 14px 20px', fontSize: 11.5, color: 'var(--tb-text-dim)', lineHeight: 1.6 }}>
+        No judgment calls detected yet. When the agent writes "I'll assume…",
+        "instead of…", or "went with…", those sentences surface here — the
+        choices being made on your behalf.
+      </div>
+    );
+  }
+
+  // Group items into chapters by timestamp; anything before the first prompt
+  // (or in an unmatched gap) pools under its nearest chapter.
+  const groups = chapters
+    .map((c) => ({
+      chapter: c,
+      items: ledger.filter((it) => it.timestamp >= c.timestamp && it.timestamp < c.endTimestamp),
+    }))
+    .filter((g) => g.items.length > 0)
+    .reverse(); // newest prompt first
+  const matched  = new Set(groups.flatMap((g) => g.items));
+  const orphaned = ledger.filter((it) => !matched.has(it));
+
+  return (
+    <div style={{ padding: '10px 12px 20px' }}>
+      {groups.map(({ chapter, items }) => (
+        <div key={chapter.index} style={{ marginBottom: 12 }}>
+          <SectionLabel>P{chapter.index} — {chapter.text.replace(/\s+/g, ' ').slice(0, 40)}{chapter.text.length > 40 ? '…' : ''}</SectionLabel>
+          {items.map((it, i) => <LedgerRow key={i} item={it} />)}
+        </div>
+      ))}
+      {orphaned.length > 0 && (
+        <div>
+          <SectionLabel>Earlier</SectionLabel>
+          {orphaned.map((it, i) => <LedgerRow key={i} item={it} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LedgerRow({ item }: { item: LedgerItemUI }) {
+  const isAssumption = item.kind === 'assumption';
+  const color = isAssumption ? '#d29922' : '#58a6ff';
+  const Icon  = isAssumption ? QuestionIcon : BranchIcon;
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 9,
+      padding: '8px 10px',
+      border: '1px solid var(--tb-border)',
+      borderRadius: 8,
+      background: 'var(--tb-surface-2)',
+      marginBottom: 7,
+    }}>
+      <span title={isAssumption ? 'Assumption' : 'Decision'}
+            style={{ color, display: 'flex', flexShrink: 0, marginTop: 1 }}>
+        <Icon size={13} />
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{
+          fontSize: 10, fontWeight: 700, letterSpacing: '0.07em',
+          textTransform: 'uppercase', color, marginBottom: 3,
+        }}>
+          {item.kind}
+        </div>
+        <div style={{
+          fontSize: 12.5, lineHeight: 1.5, color: 'var(--tb-text)',
+          wordBreak: 'break-word',
+        }}>
+          {item.text}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -122,7 +239,7 @@ function AnomaliesTab({ chapters, selectedIndex, records }: {
     <div style={{ padding: '10px 12px 20px' }}>
       <SectionLabel>This session</SectionLabel>
       {current.length === 0 ? (
-        <div style={{ fontSize: 11, color: 'var(--tb-text-dim)', padding: '4px 2px 12px' }}>
+        <div style={{ fontSize: 12, color: 'var(--tb-text-dim)', padding: '4px 2px 12px' }}>
           No anomalies in this prompt.
         </div>
       ) : (
@@ -136,7 +253,7 @@ function AnomaliesTab({ chapters, selectedIndex, records }: {
       ))}
 
       {empty && (
-        <div style={{ fontSize: 10.5, color: 'var(--tb-text-dim)', padding: '10px 2px' }}>
+        <div style={{ fontSize: 11.5, color: 'var(--tb-text-dim)', padding: '10px 2px' }}>
           Clean session so far — detections will show up here and stay as a
           permanent evidence trail.
         </div>
@@ -170,10 +287,10 @@ function AnomalyItem({ record }: { record: AnomalyRecordUI }) {
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 4 }}>
         <span style={{ color, display: 'flex' }}><Icon size={14} /></span>
-        <span style={{ fontSize: 12.5, fontWeight: 700, color }}>{title}</span>
+        <span style={{ fontSize: 13.5, fontWeight: 700, color }}>{title}</span>
       </div>
       <div style={{
-        fontSize: 11.5, lineHeight: 1.45,
+        fontSize: 12.5, lineHeight: 1.45,
         color: sev === 'high' ? '#ffb3ac' : '#e8c877',
         wordBreak: 'break-word',
       }}>
@@ -197,12 +314,12 @@ function HistorySection({ title, count, children }: {
         }}
       >
         <span style={{
-          fontSize: 9, fontWeight: 700, letterSpacing: '0.1em',
+          fontSize: 10, fontWeight: 700, letterSpacing: '0.1em',
           textTransform: 'uppercase', color: 'var(--tb-text-dim)',
         }}>
           All time · {title}
         </span>
-        <span style={{ fontSize: 9, color: 'var(--tb-text-dim)' }}>({count})</span>
+        <span style={{ fontSize: 10, color: 'var(--tb-text-dim)' }}>({count})</span>
         <span style={{
           color: 'var(--tb-text-dim)', display: 'flex',
           transform: open ? 'rotate(180deg)' : 'none',
@@ -242,7 +359,7 @@ function GuardsTab({ guards, onSetGuard, onAddGuard, onRemoveGuard }: {
         <BuiltinRow key={g.key} guard={g} onToggle={(v) => onSetGuard(g.key, v)} />
       ))}
       {guards.builtins.length === 0 && (
-        <div style={{ fontSize: 10.5, color: 'var(--tb-text-dim)', padding: '4px 2px 8px' }}>
+        <div style={{ fontSize: 11.5, color: 'var(--tb-text-dim)', padding: '4px 2px 8px' }}>
           Loading guards…
         </div>
       )}
@@ -260,7 +377,7 @@ function GuardsTab({ guards, onSetGuard, onAddGuard, onRemoveGuard }: {
           }}>
             <span style={{
               flex: 1, minWidth: 0,
-              fontSize: 10.5,
+              fontSize: 11.5,
               fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
               color: 'var(--tb-blue)',
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -275,7 +392,7 @@ function GuardsTab({ guards, onSetGuard, onAddGuard, onRemoveGuard }: {
                 border: '1px solid var(--tb-border)',
                 borderRadius: 3,
                 color: 'var(--tb-text-muted)',
-                fontSize: 10, padding: '1px 7px',
+                fontSize: 11, padding: '1px 7px',
                 cursor: 'pointer', flexShrink: 0,
               }}
             >
@@ -301,7 +418,7 @@ function GuardsTab({ guards, onSetGuard, onAddGuard, onRemoveGuard }: {
                 border: '1px solid var(--tb-border-2)',
                 borderRadius: 3,
                 color: 'var(--tb-text)',
-                fontSize: 10.5,
+                fontSize: 11.5,
                 fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
                 padding: '4px 8px',
                 outline: 'none',
@@ -315,7 +432,7 @@ function GuardsTab({ guards, onSetGuard, onAddGuard, onRemoveGuard }: {
                 border: '1px solid rgba(88,166,255,0.4)',
                 borderRadius: 3,
                 color: 'var(--tb-blue)',
-                fontSize: 10, fontWeight: 600,
+                fontSize: 11, fontWeight: 600,
                 padding: '0 10px',
                 cursor: draft.trim() ? 'pointer' : 'not-allowed',
               }}
@@ -332,7 +449,7 @@ function GuardsTab({ guards, onSetGuard, onAddGuard, onRemoveGuard }: {
               border: '1px dashed var(--tb-border-2)',
               borderRadius: 5,
               color: 'var(--tb-text-muted)',
-              fontSize: 10.5, fontFamily: 'var(--tb-ui-font)',
+              fontSize: 11.5, fontFamily: 'var(--tb-ui-font)',
               padding: '7px 0',
               cursor: 'pointer',
             }}
@@ -344,7 +461,7 @@ function GuardsTab({ guards, onSetGuard, onAddGuard, onRemoveGuard }: {
 
       <div style={{
         marginTop: 12,
-        fontSize: 9.5, lineHeight: 1.5,
+        fontSize: 10.5, lineHeight: 1.5,
         color: 'var(--tb-text-dim)',
       }}>
         A matching call is auto-denied before it runs; the rule name is sent
@@ -368,10 +485,10 @@ function BuiltinRow({ guard, onToggle }: {
       background: 'var(--tb-surface)',
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--tb-text)' }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--tb-text)' }}>
           {guard.label}
         </div>
-        <div style={{ fontSize: 9.5, color: 'var(--tb-text-muted)', marginTop: 2, lineHeight: 1.4 }}>
+        <div style={{ fontSize: 10.5, color: 'var(--tb-text-muted)', marginTop: 2, lineHeight: 1.4 }}>
           {guard.description}
         </div>
       </div>
@@ -413,7 +530,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
-      fontSize: 9, fontWeight: 700,
+      fontSize: 10, fontWeight: 700,
       letterSpacing: '0.1em', textTransform: 'uppercase',
       color: 'var(--tb-text-dim)',
       padding: '2px 0 7px',

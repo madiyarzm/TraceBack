@@ -77,7 +77,7 @@ export default function SessionOdometer({
           padding: '6px 12px',
           borderBottom: '1px solid rgba(248,81,73,0.35)',
           color: '#ffa198',
-          fontSize: 11, fontWeight: 600,
+          fontSize: 12, fontWeight: 600,
           animation: 'glitchIn 0.45s steps(3)',
         }}>
           <span style={{ animation: 'pendingPulse 1.2s ease-in-out infinite', display: 'flex' }}>
@@ -101,7 +101,7 @@ export default function SessionOdometer({
           borderBottom: '1px solid rgba(210,153,34,0.3)',
           background: 'rgba(210,153,34,0.06)',
           color: '#d29922',
-          fontSize: 11, fontWeight: 600,
+          fontSize: 12, fontWeight: 600,
         }}>
           <span style={{ animation: 'pendingPulse 1.6s ease-in-out infinite', display: 'flex' }}>
             <ClockIcon size={13} />
@@ -116,7 +116,7 @@ export default function SessionOdometer({
       {slim ? (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 12px' }}>
           <span style={{
-            fontSize: 10, color: 'var(--tb-text-muted)',
+            fontSize: 11, color: 'var(--tb-text-muted)',
             fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
             flex: 1, minWidth: 0,
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -136,7 +136,7 @@ export default function SessionOdometer({
                 border: `1px solid ${paused ? 'rgba(210,153,34,0.6)' : 'var(--tb-border)'}`,
                 borderRadius: 3,
                 color: paused ? '#d29922' : 'var(--tb-text-muted)',
-                fontSize: 9.5, fontWeight: 600,
+                fontSize: 10.5, fontWeight: 600,
                 padding: '2px 7px', cursor: 'pointer',
                 flexShrink: 0,
                 display: 'flex', alignItems: 'center',
@@ -153,7 +153,7 @@ export default function SessionOdometer({
               border: `1px solid ${chatOpen ? 'rgba(88,166,255,0.4)' : 'var(--tb-border)'}`,
               borderRadius: 3,
               color: chatOpen ? 'var(--tb-blue)' : 'var(--tb-text-muted)',
-              fontSize: 9.5, padding: '2px 7px', cursor: 'pointer',
+              fontSize: 10.5, padding: '2px 7px', cursor: 'pointer',
               flexShrink: 0,
               display: 'flex', alignItems: 'center', gap: 4,
             }}
@@ -204,7 +204,7 @@ export default function SessionOdometer({
               border: `1px solid ${paused ? 'rgba(210,153,34,0.6)' : 'var(--tb-border)'}`,
               borderRadius: 3,
               color: paused ? '#d29922' : 'var(--tb-text-muted)',
-              fontSize: 10, fontWeight: 600,
+              fontSize: 11, fontWeight: 600,
               padding: '3px 10px', cursor: 'pointer',
               display: 'flex', alignItems: 'center', gap: 5,
             }}
@@ -222,7 +222,7 @@ export default function SessionOdometer({
             border: `1px solid ${chatOpen ? 'rgba(88,166,255,0.4)' : 'var(--tb-border)'}`,
             borderRadius: 3,
             color: chatOpen ? 'var(--tb-blue)' : 'var(--tb-text-muted)',
-            fontSize: 10, fontWeight: chatOpen ? 600 : 400,
+            fontSize: 11, fontWeight: chatOpen ? 600 : 400,
             padding: '3px 10px', cursor: 'pointer',
             marginLeft: isLive && onPauseToggle ? 6 : 0,
             transition: 'background 0.1s, border-color 0.1s, color 0.1s',
@@ -244,7 +244,7 @@ export default function SessionOdometer({
         }}>
           <div style={{
             display: 'flex', alignItems: 'center', gap: 7,
-            color: '#d29922', fontSize: 10.5, fontWeight: 600,
+            color: '#d29922', fontSize: 11.5, fontWeight: 600,
           }}>
             <span style={{ animation: 'pendingPulse 1.4s ease-in-out infinite', display: 'flex' }}>
               <PauseIcon size={12} />
@@ -263,7 +263,7 @@ export default function SessionOdometer({
                 border: '1px solid rgba(210,153,34,0.4)',
                 borderRadius: 3,
                 color: 'var(--tb-text)',
-                fontSize: 11, padding: '4px 8px',
+                fontSize: 12, padding: '4px 8px',
                 outline: 'none',
               }}
             />
@@ -275,7 +275,7 @@ export default function SessionOdometer({
                 border: '1px solid rgba(210,153,34,0.5)',
                 borderRadius: 3,
                 color: '#d29922',
-                fontSize: 10.5, fontWeight: 600,
+                fontSize: 11.5, fontWeight: 600,
                 padding: '0 10px',
                 cursor: redirect.trim() ? 'pointer' : 'not-allowed',
               }}
@@ -291,7 +291,7 @@ export default function SessionOdometer({
         <div style={{
           padding: '0 12px 7px',
           display: 'flex', alignItems: 'baseline', gap: 6,
-          fontSize: 10.5, lineHeight: 1.45,
+          fontSize: 11.5, lineHeight: 1.45,
           color: 'var(--tb-text-muted)',
           fontStyle: 'italic',
         }}>
@@ -320,7 +320,7 @@ export default function SessionOdometer({
                 border: '1px solid var(--tb-border)',
                 borderRadius: 3,
                 color: 'var(--tb-text)',
-                fontSize: 11, padding: '4px 8px',
+                fontSize: 12, padding: '4px 8px',
                 outline: 'none',
               }}
             />
@@ -332,7 +332,7 @@ export default function SessionOdometer({
                 border: '1px solid var(--tb-border)',
                 borderRadius: 3,
                 color: 'var(--tb-text)',
-                fontSize: 10.5, padding: '0 10px',
+                fontSize: 11.5, padding: '0 10px',
                 cursor: chatLoading ? 'wait' : 'pointer',
               }}
             >
@@ -341,7 +341,7 @@ export default function SessionOdometer({
           </div>
           {chatAnswer && (
             <div style={{
-              fontSize: 11, lineHeight: 1.55,
+              fontSize: 12, lineHeight: 1.55,
               color: 'var(--tb-text)',
               background: 'var(--tb-surface)',
               border: '1px solid var(--tb-border)',
@@ -409,7 +409,7 @@ function renderInline(line: string): React.ReactNode[] {
         return (
           <code key={i} style={{
             fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
-            fontSize: 10,
+            fontSize: 11,
             background: 'var(--tb-surface-2)',
             border: '1px solid var(--tb-border)',
             borderRadius: 3,
@@ -428,13 +428,13 @@ function Stat({ label, value, color, dim }: {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
       <span style={{
-        fontSize: 13, fontWeight: 600,
+        fontSize: 14, fontWeight: 600,
         fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
         color: color ?? (dim ? 'var(--tb-text-muted)' : 'var(--tb-text)'),
         lineHeight: 1.1,
       }}>{value}</span>
       <span style={{
-        fontSize: 8.5, fontWeight: 600,
+        fontSize: 9.5, fontWeight: 600,
         color: 'var(--tb-text-dim)',
         letterSpacing: '0.07em', textTransform: 'uppercase',
       }}>{label}</span>

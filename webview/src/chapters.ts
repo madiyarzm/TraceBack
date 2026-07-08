@@ -8,6 +8,9 @@ import type { AnomalyRecordUI } from './useSessionFeed';
  */
 
 export interface ChapterPlanItem {
+  /** Conversation-wide task id parsed from the TaskCreate response
+   *  ("Task #18 created…"); '?n' when the response didn't carry one. */
+  id?:         string;
   content:     string;
   status:      'pending' | 'in_progress' | 'completed';
   activeForm?: string;
@@ -55,7 +58,6 @@ function fileNameOf(input?: Record<string, unknown>): string | null {
 function applyPlanNode(
   plan: ChapterPlanItem[],
   taskCounterRef: { n: number },
-  taskIds: Map<number, string>,
   node: TimelineNode,
 ): ChapterPlanItem[] {
   const input = node.toolInput ?? {};
@@ -72,9 +74,13 @@ function applyPlanNode(
     return items.length ? items : plan;
   }
   if (node.toolName === 'TaskCreate' && typeof input.subject === 'string') {
+    // The node's detail holds the tool response, which carries the REAL
+    // conversation-wide id — a local counter guesses wrong whenever this
+    // session isn't the conversation's first (tasks then stuck "waiting").
+    const m = /#(\d+)/.exec(node.detail ?? '');
     taskCounterRef.n++;
-    taskIds.set(plan.length, String(taskCounterRef.n));
     return [...plan, {
+      id: m ? m[1] : `?${taskCounterRef.n}`,
       content: input.subject,
       status: 'pending',
       activeForm: typeof input.activeForm === 'string' ? input.activeForm : undefined,
@@ -87,9 +93,10 @@ function applyPlanNode(
       : typeof rawId === 'number' ? String(rawId)
       : null;
     if (!wanted) return plan;
+    const matches = (it: ChapterPlanItem) => it.id === wanted || it.id === `?${wanted}`;
     return plan
-      .filter((_, i) => !(taskIds.get(i) === wanted && input.status === 'deleted'))
-      .map((it, i) => taskIds.get(i) !== wanted ? it : {
+      .filter((it) => !(matches(it) && input.status === 'deleted'))
+      .map((it) => !matches(it) ? it : {
         ...it,
         status:
           input.status === 'in_progress' || input.status === 'completed'
@@ -107,7 +114,6 @@ export function computeChapters(nodes: TimelineNode[]): PromptChapter[] {
   let current: PromptChapter | null = null;
   let plan: ChapterPlanItem[] = [];
   const taskCounter = { n: 0 };
-  const taskIds = new Map<number, string>();
 
   function open(id: string, text: string, timestamp: number): PromptChapter {
     const chapter: PromptChapter = {
@@ -144,7 +150,7 @@ export function computeChapters(nodes: TimelineNode[]): PromptChapter[] {
       continue;
     }
     if (!current) current = open('', '(before first prompt)', node.timestamp);
-    if (node.isPlanUpdate) plan = applyPlanNode(plan, taskCounter, taskIds, node);
+    if (node.isPlanUpdate) plan = applyPlanNode(plan, taskCounter, node);
     const c = current;
     c.nodes.push(node);
     c.plan = plan;
@@ -194,11 +200,119 @@ function buildTaskGroups(chapter: PromptChapter): ChapterTaskGroup[] {
   return Array.from(groups.values());
 }
 
-/** Plan items in the chapter snapshot with no recorded actions (locked/pending). */
+// ── Phase blocks (fallback grouping when no todo plan exists) ────────────────
+
+export type PhaseKind = 'reading' | 'running' | 'editing' | 'actions';
+
+export interface PhaseBlock {
+  kind:        PhaseKind;
+  label:       string;   // Reading / Running / Editing / Actions
+  /** Specific one-liner: the files read/edited or commands run, e.g.
+   *  "codename.ts, PanelApp.tsx +1" — generic verbs alone read as filler. */
+  summary:     string;
+  nodes:       TimelineNode[];
+  actionCount: number;
+  errorCount:  number;
+  durationMs:  number;
+}
+
+const PHASE_LABEL: Record<PhaseKind, string> = {
+  reading: 'Reading', running: 'Running', editing: 'Editing', actions: 'Actions',
+};
+
+function phaseKindOf(toolName: string): PhaseKind | null {
+  const t = toolName.toLowerCase();
+  if (t === 'read')                    return 'reading';
+  if (t === 'bash')                    return 'running';
+  if (t === 'edit' || t === 'write')   return 'editing';
+  return null;
+}
+
+/**
+ * Group a flat action list into phase blocks by tool-type runs: consecutive
+ * READs → Reading, BASHes → Running, EDIT/WRITEs → Editing. Runs of length 1
+ * and unclassified tools merge into Actions blocks, so the view always has at
+ * least one level of grouping even without a todo plan.
+ */
+export function computePhaseBlocks(nodes: TimelineNode[]): PhaseBlock[] {
+  // First pass: runs of consecutive same-kind tools.
+  const runs: { kind: PhaseKind | null; nodes: TimelineNode[] }[] = [];
+  for (const node of nodes) {
+    const kind = phaseKindOf(node.toolName);
+    const last = runs[runs.length - 1];
+    if (last && last.kind === kind) last.nodes.push(node);
+    else runs.push({ kind, nodes: [node] });
+  }
+
+  // Second pass: typed runs of ≥2 become their own block (a batch node already
+  // stands for ≥3 calls, so it counts alone); everything else pools into
+  // Actions, merging adjacent leftovers.
+  const blocks: PhaseBlock[] = [];
+  const push = (kind: PhaseKind, runNodes: TimelineNode[]) => {
+    const last = blocks[blocks.length - 1];
+    if (kind === 'actions' && last?.kind === 'actions') {
+      last.nodes.push(...runNodes);
+    } else {
+      blocks.push({ kind, label: PHASE_LABEL[kind], summary: '', nodes: [...runNodes],
+                    actionCount: 0, errorCount: 0, durationMs: 0 });
+    }
+  };
+  for (const run of runs) {
+    const isTyped = run.kind !== null &&
+      (run.nodes.length >= 2 || run.nodes.some((n) => n.isBatch));
+    push(isTyped ? run.kind! : 'actions', run.nodes);
+  }
+
+  for (const b of blocks) {
+    for (const n of b.nodes) {
+      b.actionCount += n.count;
+      b.errorCount  += n.status === 'error' ? 1 : 0;
+      b.durationMs  += n.durationMs ?? 0;
+    }
+    b.summary = phaseSummary(b.kind, b.nodes);
+  }
+  return blocks;
+}
+
+/** First meaningful token pair of a bash command ("npm test", "npx vitest"). */
+function commandStem(command: string): string {
+  const tokens = command.trim().split(/\s+/).filter((t) => !/^[A-Z_]+=/.test(t));
+  return tokens.slice(0, 2).join(' ');
+}
+
+/** Distinct concrete objects of a phase — file names or command stems. */
+function phaseSummary(kind: PhaseKind, nodes: TimelineNode[]): string {
+  const seen: string[] = [];
+  const add = (s: string | null) => {
+    if (s && !seen.includes(s)) seen.push(s);
+  };
+
+  for (const node of nodes) {
+    const items = node.isBatch && node.batchItems ? node.batchItems : [node];
+    for (const item of items) {
+      const input = item.toolInput ?? {};
+      if (kind === 'running') {
+        add(typeof input.command === 'string' ? commandStem(input.command) : null);
+      } else if (kind === 'actions') {
+        add(node.toolName);
+      } else {
+        add(fileNameOf(item.toolInput));
+      }
+    }
+  }
+
+  if (seen.length === 0) return '';
+  const shown = seen.slice(0, 2).join(', ');
+  return seen.length > 2 ? `${shown} +${seen.length - 2}` : shown;
+}
+
+/** Plan items still queued: status pending AND no recorded actions. A done or
+ *  in-progress item with unattributed actions must NOT resurface as "waiting". */
 export function pendingPlanItems(chapter: PromptChapter): ChapterPlanItem[] {
   const covered = new Set(chapter.taskGroups.map((g) => g.objective));
   return chapter.plan.filter(
-    (p) => !covered.has(p.content) && !covered.has(p.activeForm ?? '')
+    (p) => p.status === 'pending' &&
+           !covered.has(p.content) && !covered.has(p.activeForm ?? '')
   );
 }
 

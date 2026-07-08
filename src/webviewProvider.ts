@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { TraceSession, traceStore } from './traceStore';
 import { flushSession } from './server';
@@ -50,7 +51,10 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
   postSessionUpdate(session: TraceSession): void {
     const payload = {
       type: 'session_update',
-      session,
+      // The webview only needs which session updated (it renders from
+      // `allSessions`); shipping the full object would leak whole-file
+      // baselines into every update. Send just the id.
+      session: { id: session.id },
       // Only surface sessions that actually have activity. Empty sessions
       // (e.g. the fresh session created by Clear, or a session that errored
       // before any tool ran) must not spawn ghost swimlanes or trip the
@@ -72,6 +76,7 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
         paused:        s.paused,
         awaitingInput: s.awaitingInput,
         plan:          s.plan,
+        ledger:        s.ledger,
         })),
       history: listSessions(this._archiveDir),
     };
@@ -210,6 +215,11 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
       case 'get_guards':
         this._postGuards();
         break;
+      case 'request_review':
+        if (typeof message.sessionId === 'string') {
+          void this._postReviewData(message.sessionId);
+        }
+        break;
       default:
         this._outputChannel.appendLine(`[TraceBack] Unknown webview message: ${message.type}`);
     }
@@ -217,6 +227,33 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
 
   private _postGuards(): void {
     const msg = { type: 'guards_update', guards: getGuardsState() };
+    this._view?.webview.postMessage(msg);
+    this._panel?.webview.postMessage(msg);
+  }
+
+  /**
+   * Net-change review data: for every file baselined during the session, pair
+   * the pre-edit snapshot with the file's CURRENT content on disk. Sent on
+   * demand only — baselines are whole files and must not ride every
+   * session_update.
+   */
+  private async _postReviewData(sessionId: string): Promise<void> {
+    const session = traceStore.getSession(sessionId);
+    const baselines = session?.baselines ?? {};
+
+    const files = await Promise.all(
+      Object.entries(baselines).map(async ([path, baseline]) => {
+        let current: string | null = null;
+        try {
+          current = await fs.promises.readFile(path, 'utf8');
+        } catch {
+          current = null; // deleted since (or unreadable)
+        }
+        return { path, baseline: baseline.content, current };
+      })
+    );
+
+    const msg = { type: 'review_data', sessionId, files };
     this._view?.webview.postMessage(msg);
     this._panel?.webview.postMessage(msg);
   }

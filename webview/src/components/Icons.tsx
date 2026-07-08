@@ -166,3 +166,52 @@ export function SendIcon({ size = 12, strokeWidth = 1.8, style }: IconProps) {
     </svg>
   );
 }
+
+export function CloseIcon({ size = 12, strokeWidth = 2, style }: IconProps) {
+  return (
+    <svg {...base(size, style)} strokeWidth={strokeWidth}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </svg>
+  );
+}
+
+export function BranchIcon({ size = 12, strokeWidth = 1.8, style }: IconProps) {
+  return (
+    <svg {...base(size, style)} strokeWidth={strokeWidth}>
+      <line x1="6" y1="3" x2="6" y2="15" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M18 9a9 9 0 0 1-9 9" />
+    </svg>
+  );
+}
+
+export function QuestionIcon({ size = 12, strokeWidth = 1.8, style }: IconProps) {
+  return (
+    <svg {...base(size, style)} strokeWidth={strokeWidth}>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+  );
+}
+
+export function DiffIcon({ size = 12, strokeWidth = 1.8, style }: IconProps) {
+  return (
+    <svg {...base(size, style)} strokeWidth={strokeWidth}>
+      <path d="M12 3v14" />
+      <path d="M5 10h14" transform="translate(0,-3)" />
+      <path d="M5 21h14" />
+    </svg>
+  );
+}
+
+export function TerminalIcon({ size = 12, strokeWidth = 1.8, style }: IconProps) {
+  return (
+    <svg {...base(size, style)} strokeWidth={strokeWidth}>
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  );
+}

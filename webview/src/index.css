@@ -254,3 +254,42 @@ select option {
   background: var(--tb-surface);
   color: var(--tb-text);
 }
+
+/* ── Ongoing-feel: active task pulse + newest-action arrival flash ── */
+@keyframes tbActivePulse {
+  0%, 100% { border-color: rgba(88, 166, 255, 0.55); box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.10); }
+  50%      { border-color: rgba(88, 166, 255, 0.25); box-shadow: 0 0 14px 0 rgba(88, 166, 255, 0.06); }
+}
+.tb-task-active { animation: tbActivePulse 2.2s ease-in-out infinite; }
+
+@keyframes tbArrive {
+  0%   { background: rgba(88, 166, 255, 0.14); }
+  100% { background: transparent; }
+}
+.tb-node-arrive { animation: tbArrive 1.4s ease-out 1; border-radius: 8px; }
+
+@keyframes tbSegPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+.tb-seg-active { animation: tbSegPulse 1.6s ease-in-out infinite; }
+
+/* ── Elite-feel micro-interactions ── */
+/* Universal press feedback: every button subtly gives under the cursor. */
+button:active:not(:disabled) { transform: translateY(0.5px) scale(0.99); }
+button { transition: transform 0.06s ease; }
+
+/* Keyboard focus that matches the accent system. */
+button:focus-visible, [role='button']:focus-visible, input:focus-visible {
+  outline: 1.5px solid var(--tb-blue);
+  outline-offset: 1px;
+}
+
+/* Accessibility floor: respect reduced motion everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

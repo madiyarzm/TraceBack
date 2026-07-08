@@ -13,7 +13,17 @@ import * as fs from 'fs';
 
 const TAIL_BYTES = 256 * 1024;
 
+/**
+ * The transcript path arrives in a hook payload, so treat it as untrusted:
+ * a real Claude Code transcript is always a `.jsonl` file. Refusing anything
+ * else stops a crafted payload from pointing the reader at, say, /etc/passwd.
+ */
+export function isTranscriptPath(p: string | undefined): p is string {
+  return typeof p === 'string' && p.endsWith('.jsonl');
+}
+
 export async function readContextTokens(transcriptPath: string): Promise<number | null> {
+  if (!isTranscriptPath(transcriptPath)) return null;
   try {
     const stat  = await fs.promises.stat(transcriptPath);
     const start = Math.max(0, stat.size - TAIL_BYTES);
@@ -60,6 +70,12 @@ export function noteTranscript(sessionId: string, transcriptPath: string): void 
 }
 
 const INTENT_MAX_CHARS = 120;
+const INTENT_MIN_CHARS = 40;
+
+/** Post-action reactions and connective filler — not reasoning. */
+const FILLER_PREFIXES = [
+  'perfect', 'excellent', 'good', 'great', "now i'll", 'now let me', "i'll now",
+];
 
 /** First sentence of a text block, trimmed to INTENT_MAX_CHARS. */
 export function firstSentence(text: string): string | null {
@@ -73,9 +89,122 @@ export function firstSentence(text: string): string | null {
     : sentence;
 }
 
+/**
+ * The first sentence, but only if it reads like actual reasoning: at least
+ * INTENT_MIN_CHARS long and not a reaction/filler opener ("Perfect!", "Now
+ * let me…"). Null otherwise — no intent beats a meaningless one.
+ */
+export function meaningfulIntent(text: string): string | null {
+  const sentence = firstSentence(text);
+  if (!sentence) return null;
+  const lower = sentence.toLowerCase();
+  if (FILLER_PREFIXES.some((p) => lower.startsWith(p))) return null;
+  if (sentence.length < INTENT_MIN_CHARS) return null;
+  return sentence;
+}
+
 interface TranscriptItem {
   kind: 'text' | 'tool_use';
   text?: string;
+}
+
+// ─── Decision & assumption ledger ────────────────────────────────────────────
+//
+// Agents make silent judgment calls in prose — "I'll assume X", "instead of
+// Y" — that scroll past unread. This mines the transcript's assistant text
+// for those sentences and surfaces them as first-class objects. Regex-based
+// by design: it must work offline, and judgment markers are surprisingly
+// regular in agent output.
+
+export interface LedgerItem {
+  text:      string;
+  kind:      'decision' | 'assumption';
+  /** Timestamp of the transcript line the sentence came from. */
+  timestamp: number;
+}
+
+const ASSUMPTION_MARKER = /\b(i(?:'|’)ll assume|assuming|i(?:'|’)m assuming|presumably|i suspect)\b/i;
+const DECISION_MARKER   = new RegExp(
+  '\\b(instead of|rather than|i chose|chose to|opted (?:for|to)|went with|' +
+  'i(?:\'|’)ll use|decided (?:to|on|against)|deliberately|for simplicity|' +
+  'to keep it simple|for now)\\b', 'i'
+);
+
+const LEDGER_MIN_CHARS = 25;
+const LEDGER_MAX_CHARS = 400;
+
+/** Truncate at a word boundary — a mid-word chop reads as broken formatting. */
+function clip(s: string): string {
+  if (s.length <= LEDGER_MAX_CHARS) return s;
+  const cut = s.slice(0, LEDGER_MAX_CHARS);
+  const atWord = cut.slice(0, Math.max(cut.lastIndexOf(' '), LEDGER_MAX_CHARS - 40));
+  return atWord.trimEnd() + '…';
+}
+
+/** Sentences of a text block that read like judgment calls. Exported for tests. */
+export function mineDecisions(text: string, timestamp: number): LedgerItem[] {
+  const out: LedgerItem[] = [];
+  const sentences = text.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+/);
+  for (const raw of sentences) {
+    // Inline markdown (**bold**, `code`) is authoring noise in a UI card.
+    const s = raw.trim().replace(/\*\*|__|`/g, '');
+    if (s.length < LEDGER_MIN_CHARS) continue;
+    const isAssumption = ASSUMPTION_MARKER.test(s);
+    if (!isAssumption && !DECISION_MARKER.test(s)) continue;
+    // Markdown headers / bullets are structure, not prose judgment.
+    if (/^[#>\-*|\d]/.test(s)) continue;
+    out.push({
+      text: clip(s),
+      kind: isAssumption ? 'assumption' : 'decision',
+      timestamp,
+    });
+  }
+  return out;
+}
+
+/**
+ * All judgment sentences in the transcript tail, deduped, oldest first.
+ * Tail-only like everything else here — a merged, session-long ledger is the
+ * caller's job (traceStore keeps items that scroll out of the window).
+ */
+export async function extractDecisions(transcriptPath: string): Promise<LedgerItem[]> {
+  if (!isTranscriptPath(transcriptPath)) return [];
+  try {
+    const stat  = await fs.promises.stat(transcriptPath);
+    const start = Math.max(0, stat.size - TAIL_BYTES);
+    const fh    = await fs.promises.open(transcriptPath, 'r');
+    const buf   = Buffer.alloc(stat.size - start);
+    await fh.read(buf, 0, buf.length, start);
+    await fh.close();
+
+    const items: LedgerItem[] = [];
+    for (const line of buf.toString('utf-8').split('\n')) {
+      if (!line.includes('"content"')) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed?.type !== 'assistant') continue;
+        const ts = typeof parsed.timestamp === 'string' ? Date.parse(parsed.timestamp) : NaN;
+        const content = parsed?.message?.content;
+        if (!Array.isArray(content)) continue;
+        for (const block of content) {
+          if (block?.type !== 'text' || typeof block.text !== 'string') continue;
+          items.push(...mineDecisions(block.text, Number.isFinite(ts) ? ts : Date.now()));
+        }
+      } catch {
+        // partial line at the chunk boundary — skip
+      }
+    }
+
+    const seen = new Set<string>();
+    return items.filter((it) => {
+      const key = it.text.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -99,7 +228,7 @@ export async function extractIntentForTool(
   fromEnd: number,
 ): Promise<string | null> {
   const transcriptPath = _transcriptPaths.get(sessionId);
-  if (!transcriptPath) return null;
+  if (!isTranscriptPath(transcriptPath)) return null;
 
   try {
     const stat  = await fs.promises.stat(transcriptPath);
@@ -140,9 +269,11 @@ export async function extractIntentForTool(
     if (target === -1) return null;
 
     // The nearest preceding text block — sibling tool calls between the text
-    // and this one don't reset it (they share the same stated intent).
+    // and this one don't reset it (they share the same stated intent). If that
+    // block is filler ("Perfect!", too short), the intent is null rather than
+    // some older, unrelated sentence.
     for (let i = target - 1; i >= 0; i--) {
-      if (items[i].kind === 'text') return firstSentence(items[i].text ?? '');
+      if (items[i].kind === 'text') return meaningfulIntent(items[i].text ?? '');
     }
     return null;
   } catch {

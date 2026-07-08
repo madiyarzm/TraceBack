@@ -54,7 +54,7 @@ export default function SidebarApp() {
         <span
           title={display ? `${agentIdentity(display.id).name} — ${display.label}` : undefined}
           style={{
-            fontSize: 11, fontWeight: 600,
+            fontSize: 12, fontWeight: 600,
             color: display ? agentIdentity(display.id).color : 'var(--tb-text)',
             overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             minWidth: 0,
@@ -68,7 +68,7 @@ export default function SidebarApp() {
           )}
         </span>
         {hasData && (
-          <span style={{ fontSize: 10, color: 'var(--tb-text-muted)', flexShrink: 0 }}>
+          <span style={{ fontSize: 11, color: 'var(--tb-text-muted)', flexShrink: 0 }}>
             {realCount}
           </span>
         )}
@@ -82,7 +82,7 @@ export default function SidebarApp() {
           sessions={sessions.map((s) => ({
             id: s.id, label: s.label, startedAt: s.startedAt,
             nodeCount: s.nodeCount, stopped: s.stopped,
-            anomalous: !!s.anomaly?.isAnomalous,
+            anomalous: !!s.anomaly?.isAnomalous && s.anomaly?.type !== 'stall',
           }))}
           displayId={display?.id ?? null}
           pinnedId={pinnedId}
@@ -116,7 +116,7 @@ export default function SidebarApp() {
           </div>
         )}
 
-        {anomaly?.isAnomalous && (
+        {anomaly?.isAnomalous && anomaly.type !== 'stall' && (
           <div style={{
             position: 'fixed', inset: 0,
             background: 'radial-gradient(ellipse at center, rgba(248,81,73,0.07) 0%, rgba(248,81,73,0.02) 60%, transparent 100%)',
@@ -144,7 +144,7 @@ function HeaderButton({ children, title, onClick }: {
         border: 'none',
         borderRadius: 3,
         color: hovered ? 'var(--tb-text)' : 'var(--tb-text-muted)',
-        fontSize: 12,
+        fontSize: 13,
         padding: '2px 5px',
         cursor: 'pointer',
         flexShrink: 0,
@@ -180,7 +180,7 @@ function OverflowMenu({ feed }: { feed: ReturnType<typeof useSessionFeed> }) {
         onClick={() => { action(); setOpen(false); }}
         style={{
           padding: '5px 12px',
-          fontSize: 11,
+          fontSize: 12,
           color: danger ? '#f85149' : 'var(--tb-text)',
           cursor: 'pointer',
           whiteSpace: 'nowrap',
@@ -218,7 +218,7 @@ function OverflowMenu({ feed }: { feed: ReturnType<typeof useSessionFeed> }) {
               <div
                 onClick={() => setConfirmingClear(true)}
                 style={{
-                  padding: '5px 12px', fontSize: 11,
+                  padding: '5px 12px', fontSize: 12,
                   color: '#f85149', cursor: 'pointer', whiteSpace: 'nowrap',
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--tb-surface-2)'; }}

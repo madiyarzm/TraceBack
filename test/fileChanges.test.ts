@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { computeFileChanges, summarizeChanges } from '../webview/src/fileChanges';
+import { computeFileChanges, summarizeChanges, summarizeVerification, computeTouched, summarizeTouched, verifyChanges } from '../webview/src/fileChanges';
 import type { TimelineNode } from '../webview/src/components/TimelineCard';
 
 let nextId = 0;
@@ -105,5 +105,119 @@ describe('summarizeChanges', () => {
     ]);
     expect(summarizeChanges(changes)).toBe('1 created · 2 modified');
     expect(summarizeChanges([])).toBe('');
+  });
+});
+
+describe('verifyChanges', () => {
+  it('marks a file verified when a check command succeeds after its last edit', () => {
+    const statuses = verifyChanges([
+      node('Edit', { file_path: '/p/a.ts', old_string: 'x', new_string: 'y' }),
+      node('Bash', { command: 'npx vitest run' }),
+    ]);
+    expect(statuses.get('/p/a.ts')).toBe('verified');
+  });
+
+  it('marks a file failed when the latest check after the edit errored', () => {
+    const statuses = verifyChanges([
+      node('Edit', { file_path: '/p/a.ts', old_string: 'x', new_string: 'y' }),
+      node('Bash', { command: 'npm test' }, { status: 'error' }),
+    ]);
+    expect(statuses.get('/p/a.ts')).toBe('failed');
+  });
+
+  it('marks a file unverified when the agent edits AFTER the last check', () => {
+    const statuses = verifyChanges([
+      node('Edit', { file_path: '/p/a.ts', old_string: 'x', new_string: 'y' }),
+      node('Bash', { command: 'npm test' }),
+      node('Edit', { file_path: '/p/a.ts', old_string: 'y', new_string: 'z' }),
+    ]);
+    expect(statuses.get('/p/a.ts')).toBe('unverified');
+  });
+
+  it('ignores bash commands that are not checks', () => {
+    const statuses = verifyChanges([
+      node('Edit', { file_path: '/p/a.ts', old_string: 'x', new_string: 'y' }),
+      node('Bash', { command: 'git status' }),
+      node('Bash', { command: 'ls -la' }),
+    ]);
+    expect(statuses.get('/p/a.ts')).toBe('unverified');
+  });
+
+  it('counts a command naming the file as a check', () => {
+    const statuses = verifyChanges([
+      node('Write', { file_path: '/p/deploy.sh', content: 'echo hi' }),
+      node('Bash', { command: 'bash /p/deploy.sh' }),
+    ]);
+    expect(statuses.get('/p/deploy.sh')).toBe('verified');
+  });
+
+  it('resolves edits and checks inside batch nodes', () => {
+    const batch = node('Bash', undefined, {
+      isBatch: true,
+      count: 3,
+      batchItems: [
+        { label: 'a', status: 'success', toolInput: { command: 'ls' } },
+        { label: 'b', status: 'success', toolInput: { command: 'npx tsc --noEmit' } },
+        { label: 'c', status: 'success', toolInput: { command: 'git diff' } },
+      ],
+    });
+    const statuses = verifyChanges([
+      node('Edit', { file_path: '/p/a.ts', old_string: 'x', new_string: 'y' }),
+      batch,
+    ]);
+    expect(statuses.get('/p/a.ts')).toBe('verified');
+  });
+});
+
+describe('summarizeVerification', () => {
+  it('is empty when everything is verified', () => {
+    const m = new Map([['/a', 'verified'], ['/b', 'verified']] as const);
+    expect(summarizeVerification(new Map(m))).toBe('');
+  });
+
+  it('reports unverified and failing counts', () => {
+    const m = new Map<string, 'verified' | 'failed' | 'unverified'>([
+      ['/a', 'unverified'], ['/b', 'failed'], ['/c', 'verified'],
+    ]);
+    const line = summarizeVerification(m);
+    expect(line).toContain('1 of 3 changed files never exercised');
+    expect(line).toContain('1 failing');
+  });
+});
+
+describe('computeTouched', () => {
+  it('collects reads and changes, stronger claim winning per file', () => {
+    const touched = computeTouched([
+      node('Read',  { file_path: '/p/a.ts' }),
+      node('Read',  { file_path: '/p/b.ts' }),
+      node('Edit',  { file_path: '/p/a.ts', old_string: 'x', new_string: 'y' }),
+      node('Write', { file_path: '/p/c.ts', content: 'new' }),
+      node('Bash',  { command: 'ls' }),
+    ]);
+    const byPath = new Map(touched.map((t) => [t.path, t.kind]));
+    expect(byPath.get('/p/a.ts')).toBe('modified'); // read then edited → modified wins
+    expect(byPath.get('/p/b.ts')).toBe('read');
+    expect(byPath.get('/p/c.ts')).toBe('created');
+    expect(touched).toHaveLength(3);
+  });
+
+  it('resolves batch items', () => {
+    const batch = node('Read', undefined, {
+      isBatch: true,
+      count: 2,
+      batchItems: [
+        { label: 'a', status: 'success', toolInput: { file_path: '/p/x.ts' } },
+        { label: 'b', status: 'success', toolInput: { file_path: '/p/y.ts' } },
+      ],
+    });
+    expect(computeTouched([batch])).toHaveLength(2);
+  });
+
+  it('summarizes counts', () => {
+    expect(summarizeTouched([
+      { path: '/a', kind: 'read' },
+      { path: '/b', kind: 'read' },
+      { path: '/c', kind: 'modified' },
+    ])).toBe('2 read · 1 modified');
   });
 });

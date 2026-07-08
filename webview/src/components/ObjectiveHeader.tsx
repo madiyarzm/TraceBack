@@ -161,7 +161,7 @@ export default function ObjectiveHeader({ plan, nodes, isLive, slim = false }: P
               {(['explore', 'build', 'verify'] as const).map((p) => (
                 <span key={p} style={{
                   display: 'flex', alignItems: 'center', gap: 3,
-                  fontSize: 8.5, letterSpacing: '0.05em', textTransform: 'uppercase',
+                  fontSize: 9.5, letterSpacing: '0.05em', textTransform: 'uppercase',
                   color: 'var(--tb-text-dim)',
                 }}>
                   <span style={{
@@ -202,7 +202,7 @@ export default function ObjectiveHeader({ plan, nodes, isLive, slim = false }: P
                   ...(active && isLive ? { animation: 'pendingPulse 1.6s ease-in-out infinite' } : {}),
                 }} />
                 <span style={{
-                  fontSize: 11, flex: 1, minWidth: 0,
+                  fontSize: 12, flex: 1, minWidth: 0,
                   color: item.status === 'completed' ? 'var(--tb-text-muted)'
                        : active ? 'var(--tb-text)' : 'var(--tb-text-muted)',
                   fontWeight: active ? 600 : 400,
@@ -214,7 +214,7 @@ export default function ObjectiveHeader({ plan, nodes, isLive, slim = false }: P
                 </span>
                 {rollup && (
                   <span style={{
-                    fontSize: 9, flexShrink: 0,
+                    fontSize: 10, flexShrink: 0,
                     fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
                     fontVariantNumeric: 'tabular-nums',
                     color: 'var(--tb-text-dim)',
