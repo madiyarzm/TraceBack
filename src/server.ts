@@ -1,6 +1,8 @@
 import * as http from 'http';
 import * as vscode from 'vscode';
 import { traceStore, TraceEvent, EventKind } from './traceStore';
+import { checkGuards } from './guardsManager';
+import { todoInstructionFor } from './promptHeuristics';
 
 let _server: http.Server | null = null;
 let _outputChannel: vscode.OutputChannel;
@@ -14,13 +16,13 @@ export function startServer(outputChannel: vscode.OutputChannel, port: number): 
   }
 
   _server = http.createServer((req, res) => {
-    // Allow CORS for any local webview requests
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204);
+    // Drive-by defense. This endpoint only ever receives curl from Claude Code
+    // hooks, which never set an Origin header. A browser making a cross-origin
+    // request always does — so any request carrying Origin is a web page (a
+    // malicious site probing localhost) and is refused. No CORS headers are
+    // sent, so even a permitted request's response stays unreadable to scripts.
+    if (req.headers.origin !== undefined) {
+      res.writeHead(403);
       res.end();
       return;
     }
@@ -33,12 +35,32 @@ export function startServer(outputChannel: vscode.OutputChannel, port: number): 
           const payload = JSON.parse(body);
           const event = handleHookPayload(payload);
 
-          // Tripwires: static policy rules checked BEFORE execution. A match
-          // denies the call immediately, fleet-wide, no human in the loop.
+          // UserPromptSubmit: nudge toward a todo breakdown, calibrated to the
+          // prompt's substance — nothing for continuations, a soft suggestion
+          // for medium prompts, a firm ask (incl. in_progress marking, which
+          // is what makes plan attribution work) for multi-part requests.
+          // Claude Code merges `additionalContext` into the prompt.
+          if (event && event.kind === 'user_prompt') {
+            const instruction = todoInstructionFor(event.toolResponse ?? '');
+            if (instruction) {
+              res.writeHead(200, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({
+                hookSpecificOutput: {
+                  hookEventName:     'UserPromptSubmit',
+                  additionalContext: instruction,
+                },
+              }));
+              return;
+            }
+          }
+
+          // Guards: policy rules checked BEFORE execution. A match denies the
+          // call immediately, fleet-wide, no human in the loop; the guard name
+          // is sent back so Claude receives it as context.
           if (event && event.kind === 'pre_tool_use') {
-            const tripped = checkTripwires(event);
-            if (tripped) {
-              denyCall(event, res, tripped);
+            const hit = checkGuards(event);
+            if (hit) {
+              denyCall(event, res, hit.name, hit.reason);
               return;
             }
           }
@@ -78,9 +100,17 @@ export function startServer(outputChannel: vscode.OutputChannel, port: number): 
   });
 
   _server.on('error', (err: NodeJS.ErrnoException) => {
+    // A failed bind must not leave the dead server object behind — otherwise
+    // every retry sees "_server already running" and silently does nothing.
+    _server = null;
     if (err.code === 'EADDRINUSE') {
+      _outputChannel.appendLine(
+        `[TraceBack] ✗ Port ${port} is already in use — NOT listening. ` +
+        `Another TraceBack instance (e.g. the Marketplace extension in a different window) probably owns it.`
+      );
       vscode.window.showErrorMessage(
-        `TraceBack: Port ${port} is already in use. Change it in settings (traceback.port).`
+        `TraceBack: Port ${port} is already in use — events are going to another window. ` +
+        `Disable other TraceBack instances, then run "TraceBack: Start Listening".`
       );
     } else {
       _outputChannel.appendLine(`[TraceBack] Server error: ${err.message}`);
@@ -177,9 +207,15 @@ function handleHookPayload(payload: Record<string, unknown>): TraceEvent | null 
     toolName: payload.tool_name as string | undefined,
     toolInput: payload.tool_input as Record<string, unknown> | undefined,
     toolResponse:
-      typeof payload.tool_response === 'string'
-        ? payload.tool_response
-        : JSON.stringify(payload.tool_response),
+      // Notification payloads carry the user-facing prompt in `message`;
+      // UserPromptSubmit carries the user's prompt text in `prompt`.
+      kind === 'notification'
+        ? (payload.message as string | undefined)
+        : kind === 'user_prompt'
+          ? (payload.prompt as string | undefined)
+          : typeof payload.tool_response === 'string'
+            ? payload.tool_response
+            : JSON.stringify(payload.tool_response),
     isError: hookType === 'PostToolUseFailure' || isErrorResponse(payload.tool_response),
     transcriptPath: payload.transcript_path as string | undefined,
     cwd: payload.cwd as string | undefined,
@@ -209,46 +245,17 @@ function isErrorResponse(resp: unknown): boolean {
   return false;
 }
 
-// ─── Tripwires ────────────────────────────────────────────────────────────────
+// ─── Guards (see guardsManager.ts for the rules) ─────────────────────────────
 
-interface TripwireRule {
-  /** Regex matched against the tool name (e.g. "Bash", "Edit|Write"). Empty = any tool. */
-  tool?: string;
-  /** Regex matched against toolName + serialized tool input. Required. */
-  pattern: string;
-  /** Custom message fed back to the agent. */
-  reason?: string;
+function denyCall(event: TraceEvent, res: http.ServerResponse, guardName: string, reason: string): void {
+  sendDeny(event, res, reason, `Guard "${guardName}" blocked`);
+  _outputChannel.appendLine(`[TraceBack] ⛔ guard "${guardName}" blocked ${event.toolName ?? 'tool'}`);
+  vscode.window.showWarningMessage(
+    `TraceBack guard "${guardName}" blocked ${event.toolName ?? 'a tool call'}.`
+  );
 }
 
-/** Returns the deny reason if any configured tripwire matches this call. */
-function checkTripwires(event: TraceEvent): string | null {
-  const rules = vscode.workspace
-    .getConfiguration('traceback')
-    .get<TripwireRule[]>('tripwires') ?? [];
-
-  for (const rule of rules) {
-    if (!rule?.pattern) continue;
-    try {
-      if (rule.tool && !new RegExp(rule.tool).test(event.toolName ?? '')) continue;
-      const haystack = `${event.toolName ?? ''} ${JSON.stringify(event.toolInput ?? {})}`;
-      if (new RegExp(rule.pattern, 'i').test(haystack)) {
-        return rule.reason ??
-          `Blocked by TraceBack tripwire (pattern: ${rule.pattern}). Do not retry this exact call.`;
-      }
-    } catch (err) {
-      _outputChannel.appendLine(`[TraceBack] Invalid tripwire regex "${rule.pattern}": ${err}`);
-    }
-  }
-  return null;
-}
-
-function denyCall(event: TraceEvent, res: http.ServerResponse, reason: string): void {
-  sendDeny(event, res, reason, 'Tripwire blocked');
-  _outputChannel.appendLine(`[TraceBack] ⛔ tripwire blocked ${event.toolName ?? 'tool'}: ${reason}`);
-  vscode.window.showWarningMessage(`TraceBack tripwire blocked ${event.toolName ?? 'a tool call'}: ${reason}`);
-}
-
-/** Shared deny response (used by tripwires and breakpoint redirects). */
+/** Shared deny response (used by guards and breakpoint redirects). */
 function sendDeny(event: TraceEvent, res: http.ServerResponse, reason: string, label: string): void {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   // Both schemas for compatibility: legacy top-level decision and the
@@ -283,6 +290,7 @@ function hookTypeToKind(hookType: string): EventKind | null {
     case 'PostToolUseFailure': return 'post_tool_use';
     case 'Stop':               return 'stop';
     case 'Notification':       return 'notification';
+    case 'UserPromptSubmit':   return 'user_prompt';
     default:
       return null;
   }

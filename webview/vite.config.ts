@@ -6,12 +6,18 @@ export default defineConfig({
   build: {
     // Output to a predictable location so the extension host can reference it
     outDir: 'dist',
+    // One CSS bundle — the provider links exactly assets/index.css
+    cssCodeSplit: false,
     rollupOptions: {
       output: {
-        // Single JS and CSS file — VS Code webviews work best with no dynamic imports
+        // Single JS and CSS file — VS Code webviews work best with no dynamic imports.
+        // Only stylesheets may take the index.css name: binary assets (bundled
+        // woff2 fonts) keep their own names, otherwise a font wins the name
+        // collision and the webview loads a woff2 as its stylesheet.
         entryFileNames: 'assets/index.js',
         chunkFileNames: 'assets/index.js',
-        assetFileNames: 'assets/index.css',
+        assetFileNames: (info) =>
+          info.name?.endsWith('.css') ? 'assets/index.css' : 'assets/[name]-[hash][extname]',
       },
     },
   },

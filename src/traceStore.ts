@@ -1,12 +1,14 @@
+import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { AnomalyRecord, AnomalyState, detectAnomaly } from './anomalyDetector';
-import { readContextTokens } from './tokenReader';
+import { extractDecisions, extractIntentForTool, LedgerItem, noteTranscript, readContextTokens } from './tokenReader';
 
 export type EventKind =
   | 'pre_tool_use'
   | 'post_tool_use'
   | 'stop'
-  | 'notification';
+  | 'notification'
+  | 'user_prompt';
 
 export type ToolName =
   | 'Read'
@@ -35,6 +37,9 @@ export interface TraceEvent {
   /** Working directory of the agent session (from the hook payload). */
   cwd?: string;
   timestamp: number;
+  /** First sentence of the assistant text preceding this call (transcript).
+   *  Best-effort and always optional — attached async after PostToolUse. */
+  intent?: string;
 }
 
 export interface BatchItem {
@@ -42,6 +47,8 @@ export interface BatchItem {
   detail?: string;
   status: NodeStatus;
   durationMs?: number;
+  toolInput?: Record<string, unknown>;
+  intent?: string;
 }
 
 export interface TraceNode {
@@ -58,6 +65,25 @@ export interface TraceNode {
   durationMs?: number;
   isBatch?: boolean;
   batchItems?: BatchItem[];
+  /** The in-progress plan item this call ran under (from TodoWrite state). */
+  objective?: string;
+  /** TodoWrite call — rendered as a quiet "plan updated" divider, not a card. */
+  isPlanUpdate?: boolean;
+  /** Why the agent made this call — from the transcript, may arrive late. */
+  intent?: string;
+}
+
+export interface PlanItem {
+  /** Task id for TaskCreate/TaskUpdate flows ("1", "2", …); absent for TodoWrite. */
+  id?: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed';
+  activeForm?: string;
+}
+
+export interface SessionPlan {
+  items: PlanItem[];
+  updatedAt: number;
 }
 
 export interface TraceSession {
@@ -78,6 +104,38 @@ export interface TraceSession {
   cwd?: string;
   /** Breakpoint: when true, the server parks the next PreToolUse call. */
   paused?: boolean;
+  /** Set while Claude waits on the user (permission prompt / idle input);
+   *  holds the notification message. Cleared by any subsequent activity. */
+  awaitingInput?: string;
+  /** Live task plan from the agent's TodoWrite calls. */
+  plan?: SessionPlan;
+  /** Pre-edit snapshot per file, captured on the FIRST PreToolUse Edit/Write
+   *  for that path (the hook fires before the tool executes). `content: null`
+   *  means the file did not exist yet — i.e. the agent created it. Powers the
+   *  net-change review: diff(baseline, disk-now) = the session's true effect. */
+  baselines?: Record<string, FileBaseline>;
+  /** Judgment calls mined from the transcript: decisions made and assumptions
+   *  taken, session-long (merged across transcript tail windows). */
+  ledger?: LedgerItem[];
+}
+
+export interface FileBaseline {
+  /** File content before the agent's first touch; null = didn't exist. */
+  content: string | null;
+  capturedAt: number;
+}
+
+/** Tools whose PreToolUse means "this file is about to change". */
+const FILE_MUTATING_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'FileWrite']);
+
+/** Baselines above this size are skipped — the review degrades gracefully. */
+const BASELINE_MAX_BYTES = 512 * 1024;
+
+/** Directories whose contents are never snapshotted, even if an edit targets
+ *  them — credentials and keys have no business in a code-review baseline. */
+const SENSITIVE_DIR = /(^|\/)\.(ssh|aws|gnupg|kube|docker|config\/gcloud)(\/|$)/;
+function isSensitivePath(p: string): boolean {
+  return SENSITIVE_DIR.test(p);
 }
 
 class TraceStore {
@@ -103,8 +161,6 @@ class TraceStore {
     };
     this._sessions.set(sessionId, session);
     this._activeSessionId = sessionId;
-    // Verification log: each distinct agent session shows up once here.
-    console.log(`[TraceBack] tracking new session ${sessionId} (${this._sessions.size} total)`);
     return session;
   }
 
@@ -152,9 +208,21 @@ class TraceStore {
     // their first completed turn.
     if (event.kind === 'stop') session.stopped = true;
     else if (session.stopped) session.stopped = false;
+
+    // "Waiting for you" state: a Notification means Claude is blocked on the
+    // user (permission prompt, idle). Any other activity clears it.
+    if (event.kind === 'notification') {
+      session.awaitingInput = event.toolResponse || 'Waiting for your input';
+    } else {
+      session.awaitingInput = undefined;
+    }
+
+    // Baseline capture must be kicked off before anything else: the PreToolUse
+    // hook blocks the tool, so a read started now sees the file pre-edit.
+    if (event.kind === 'pre_tool_use') this._maybeCaptureBaseline(session, event);
+
     session.events.push(event);
-    const raw = buildNodes(session.events, session.stopped);
-    session.nodes = applyBatchGrouping(raw);
+    this._rebuildNodes(session);
 
     // Recompute anomaly state on every event (O(1), tail-only). A finished
     // session can't be anomalous; otherwise the state self-clears as soon as
@@ -164,14 +232,99 @@ class TraceStore {
       session.stopped ? undefined : detectAnomaly(session.events, Date.now())
     );
 
-    if (event.transcriptPath) session.transcriptPath = event.transcriptPath;
+    if (event.transcriptPath) {
+      session.transcriptPath = event.transcriptPath;
+      noteTranscript(session.id, event.transcriptPath);
+    }
     if (event.cwd && session.cwd !== event.cwd) {
       session.cwd   = event.cwd;
       session.label = event.cwd.split('/').filter(Boolean).pop() ?? session.label;
     }
     this._maybeRefreshTokens(session);
+    if (event.kind === 'post_tool_use') {
+      this._attachIntent(session, event);
+      this._maybeRefreshLedger(session);
+    }
 
     this._onDidUpdate.fire(session);
+  }
+
+  private _rebuildNodes(session: TraceSession): void {
+    const { nodes: raw, plan } = buildNodes(session.events, session.stopped);
+    session.nodes = applyBatchGrouping(raw);
+    session.plan  = plan;
+  }
+
+  /**
+   * Snapshot a file the FIRST time the agent is about to mutate it. Reads
+   * synchronously: PreToolUse blocks the tool call until our HTTP response,
+   * and the response is only sent after addEvent returns — so a sync read
+   * here is guaranteed to see the pre-edit content. Files are small in
+   * practice; oversized ones are skipped rather than half-captured.
+   */
+  private _maybeCaptureBaseline(session: TraceSession, event: TraceEvent): void {
+    if (!FILE_MUTATING_TOOLS.has(event.toolName ?? '')) return;
+    const input = event.toolInput ?? {};
+    const path = (input.file_path ?? input.path ?? input.notebook_path) as string | undefined;
+    if (!path || typeof path !== 'string') return;
+
+    session.baselines ??= {};
+    if (path in session.baselines) return; // only the FIRST touch is the baseline
+
+    try {
+      // Defense in depth: the path comes from a hook payload. Never read
+      // through a symlink (blocks a payload from aiming the read at a secret
+      // via a planted link), and never snapshot known-sensitive locations.
+      const stat = fs.lstatSync(path);
+      if (stat.isSymbolicLink() || isSensitivePath(path)) {
+        session.baselines[path] = { content: null, capturedAt: Date.now() };
+        return;
+      }
+      if (stat.size > BASELINE_MAX_BYTES) return;
+      session.baselines[path] = {
+        content: fs.readFileSync(path, 'utf8'),
+        capturedAt: Date.now(),
+      };
+    } catch {
+      // ENOENT etc. — the agent is creating this file.
+      session.baselines[path] = { content: null, capturedAt: Date.now() };
+    }
+  }
+
+  /**
+   * Best-effort intent extraction for the call that just completed: the
+   * transcript now contains the assistant text written right before this
+   * tool_use. Attached to the PRE event (nodes are rebuilt from events, so
+   * anything stored on a node alone would be lost on the next rebuild).
+   * Never blocks — the UI renders with or without it.
+   */
+  private _attachIntent(session: TraceSession, post: TraceEvent): void {
+    if (PLAN_TOOLS.has(post.toolName ?? '')) return;
+
+    let preIndex = -1;
+    for (let i = session.events.length - 1; i >= 0; i--) {
+      const e = session.events[i];
+      if (e.kind === 'pre_tool_use' && e.toolName === post.toolName && !e.intent) {
+        preIndex = i;
+        break;
+      }
+    }
+    if (preIndex === -1) return;
+    // How many tool calls come AFTER this one — its offset from the end of the
+    // transcript, which the tail-reader can locate reliably (see
+    // extractIntentForTool). Counting from the start breaks once the
+    // transcript outgrows the tail window.
+    const fromEnd = session.events
+      .slice(preIndex + 1)
+      .filter((e) => e.kind === 'pre_tool_use').length;
+
+    const preEvent = session.events[preIndex];
+    void extractIntentForTool(session.id, fromEnd).then((intent) => {
+      if (!intent || preEvent.intent) return;
+      preEvent.intent = intent;
+      this._rebuildNodes(session);
+      this._onDidUpdate.fire(session);
+    });
   }
 
   /**
@@ -192,6 +345,32 @@ class TraceStore {
     void readContextTokens(path).then((tokens) => {
       if (tokens === null || tokens === session.contextTokens) return;
       session.contextTokens = tokens;
+      this._onDidUpdate.fire(session);
+    });
+  }
+
+  /**
+   * Throttled decision-ledger refresh. extractDecisions is tail-only, so new
+   * items are MERGED into the session ledger (deduped by text) — items that
+   * scroll out of the tail window stay.
+   */
+  private _ledgerReadAt = new Map<string, number>();
+
+  private _maybeRefreshLedger(session: TraceSession): void {
+    const path = session.transcriptPath;
+    if (!path) return;
+    const now  = Date.now();
+    const last = this._ledgerReadAt.get(session.id) ?? 0;
+    if (now - last < 4000) return;
+    this._ledgerReadAt.set(session.id, now);
+
+    void extractDecisions(path).then((items) => {
+      if (items.length === 0) return;
+      const existing = session.ledger ?? [];
+      const seen = new Set(existing.map((it) => it.text.toLowerCase()));
+      const fresh = items.filter((it) => !seen.has(it.text.toLowerCase()));
+      if (fresh.length === 0) return;
+      session.ledger = [...existing, ...fresh].sort((a, b) => a.timestamp - b.timestamp);
       this._onDidUpdate.fire(session);
     });
   }
@@ -226,13 +405,18 @@ class TraceStore {
   private _setAnomaly(session: TraceSession, next: AnomalyState | undefined): void {
     const prev = session.anomaly;
     session.anomaly = next;
+    // Stalls are "waiting on the user", not agent misbehavior — they show as
+    // a live notice but never enter the permanent anomaly record.
     const isOnset =
-      next?.isAnomalous && next.type &&
+      next?.isAnomalous && next.type && next.type !== 'stall' &&
       (!prev?.isAnomalous || prev.type !== next.type);
     if (isOnset) {
       const record: AnomalyRecord = {
         type:            next.type!,
-        reason:          next.reason ?? 'Anomaly detected',
+        severity:        next.severity ?? 'medium',
+        title:           next.title ?? 'Anomaly',
+        description:     next.description ?? next.reason ?? 'Anomaly detected',
+        reason:          next.reason ?? next.description ?? 'Anomaly detected',
         flaggedEventIds: next.flaggedEventIds,
         detectedAt:      Date.now(),
       };
@@ -273,11 +457,93 @@ class TraceStore {
 
 // ─── Pass 1: build flat node list ────────────────────────────────────────────
 
-function buildNodes(events: TraceEvent[], stopped: boolean): TraceNode[] {
+/** Extract a validated plan from TodoWrite tool input; null when malformed. */
+export function parsePlanItems(input?: Record<string, unknown>): PlanItem[] | null {
+  if (!input || !Array.isArray(input.todos)) return null;
+  const items: PlanItem[] = [];
+  for (const raw of input.todos as Record<string, unknown>[]) {
+    if (!raw || typeof raw.content !== 'string') continue;
+    const status = raw.status === 'in_progress' || raw.status === 'completed'
+      ? raw.status
+      : 'pending';
+    items.push({
+      content: raw.content,
+      status,
+      activeForm: typeof raw.activeForm === 'string' ? raw.activeForm : undefined,
+    });
+  }
+  return items.length > 0 ? items : null;
+}
+
+/** Tool names that mutate the agent's plan — two generations of Claude Code:
+ *  TodoWrite (full-list snapshots) and TaskCreate/TaskUpdate (incremental). */
+const PLAN_TOOLS = new Set(['TodoWrite', 'TaskCreate', 'TaskUpdate']);
+
+interface BuildResult {
+  nodes: TraceNode[];
+  plan?: SessionPlan;
+}
+
+function buildNodes(events: TraceEvent[], stopped: boolean): BuildResult {
   const nodes: TraceNode[] = [];
+  // The in-progress task at each point in the stream — new tool nodes are
+  // stamped with it so the UI can group effort by objective.
+  let activeObjective: string | undefined;
+  let plan: SessionPlan | undefined;
+  let taskCounter = 0; // TaskCreate ids are assigned sequentially per session
+
+  function refreshObjective() {
+    const current = plan?.items.find((i) => i.status === 'in_progress');
+    if (current) activeObjective = current.activeForm ?? current.content;
+  }
+
+  function applyPlanTool(event: TraceEvent) {
+    const input = event.toolInput;
+    if (event.toolName === 'TodoWrite') {
+      const items = parsePlanItems(input);
+      if (items) plan = { items, updatedAt: event.timestamp };
+    } else if (event.toolName === 'TaskCreate') {
+      if (typeof input?.subject !== 'string') return;
+      // Provisional '?n' id — the REAL id arrives in the PostToolUse response
+      // ("Task #18 created successfully"): Claude Code numbers tasks across
+      // the whole conversation, not per session, so a local counter guesses
+      // wrong whenever the session isn't the conversation's first.
+      taskCounter++;
+      const item: PlanItem = {
+        id:         `?${taskCounter}`,
+        content:    input.subject,
+        status:     'pending',
+        activeForm: typeof input.activeForm === 'string' ? input.activeForm : undefined,
+      };
+      plan = { items: [...(plan?.items ?? []), item], updatedAt: event.timestamp };
+    } else if (event.toolName === 'TaskUpdate') {
+      const rawId = input?.taskId;
+      const id =
+        typeof rawId === 'string' ? rawId.replace(/^#/, '')
+        : typeof rawId === 'number' ? String(rawId)
+        : null;
+      if (!id || !plan) return;
+      // '?n' fallback keeps sessions working when the response id was missing.
+      const matches = (it: PlanItem) => it.id === id || it.id === `?${id}`;
+      const items = plan.items
+        .filter((it) => !(matches(it) && input?.status === 'deleted'))
+        .map((it) => !matches(it) ? it : {
+          ...it,
+          status:
+            input?.status === 'in_progress' || input?.status === 'completed'
+              ? input.status
+              : it.status,
+          activeForm: typeof input?.activeForm === 'string' ? input.activeForm : it.activeForm,
+          content:    typeof input?.subject === 'string' ? input.subject : it.content,
+        });
+      plan = { items, updatedAt: event.timestamp };
+    }
+    refreshObjective();
+  }
 
   for (const event of events) {
     if (event.kind === 'pre_tool_use') {
+      if (PLAN_TOOLS.has(event.toolName ?? '')) applyPlanTool(event);
       const label = buildLabel(event.toolName ?? 'Unknown', event.toolInput);
 
       // Remove the trailing "Thinking…" node — a real tool is starting now
@@ -304,12 +570,26 @@ function buildNodes(events: TraceEvent[], stopped: boolean): TraceNode[] {
           eventIds: [event.id],
           timestamp: event.timestamp,
           toolInput: event.toolInput,
+          objective: activeObjective,
+          isPlanUpdate: PLAN_TOOLS.has(event.toolName ?? '') || undefined,
+          intent: event.intent,
         });
       }
       continue;
     }
 
     if (event.kind === 'post_tool_use') {
+      // The TaskCreate response carries the task's REAL conversation-wide id
+      // ("Task #18 created successfully") — confirm the provisional one.
+      if (event.toolName === 'TaskCreate' && plan) {
+        const m = /#(\d+)/.exec(event.toolResponse ?? '');
+        const idx = m ? plan.items.findIndex((it) => it.id?.startsWith('?')) : -1;
+        if (m && idx !== -1) {
+          const items = plan.items.map((it, i) => i === idx ? { ...it, id: m[1] } : it);
+          plan = { items, updatedAt: event.timestamp };
+        }
+      }
+
       const pending = [...nodes].reverse().find(
         (n) => n.toolName === event.toolName && n.status === 'pending'
       );
@@ -334,6 +614,22 @@ function buildNodes(events: TraceEvent[], stopped: boolean): TraceNode[] {
       continue;
     }
 
+    if (event.kind === 'user_prompt' && event.toolResponse) {
+      const last = nodes[nodes.length - 1];
+      if (last?.toolName === '__thinking__') nodes.pop();
+      nodes.push({
+        id: event.id,
+        toolName: '__prompt__',
+        status: 'success',
+        label: truncate(event.toolResponse.replace(/\s+/g, ' '), 120),
+        detail: event.toolResponse,
+        count: 1,
+        eventIds: [event.id],
+        timestamp: event.timestamp,
+      });
+      continue;
+    }
+
     if (event.kind === 'stop') {
       const last = nodes[nodes.length - 1];
       if (last?.toolName === '__thinking__') nodes.pop();
@@ -343,7 +639,7 @@ function buildNodes(events: TraceEvent[], stopped: boolean): TraceNode[] {
     }
   }
 
-  return nodes;
+  return { nodes, plan };
 }
 
 // ─── Pass 2: batch-group consecutive same-tool runs ──────────────────────────
@@ -357,7 +653,7 @@ function applyBatchGrouping(nodes: TraceNode[]): TraceNode[] {
   while (i < nodes.length) {
     const current = nodes[i];
 
-    if (current.toolName === '__thinking__') {
+    if (current.toolName.startsWith('__') || current.isPlanUpdate) {
       result.push(current);
       i++;
       continue;
@@ -367,7 +663,11 @@ function applyBatchGrouping(nodes: TraceNode[]): TraceNode[] {
     while (
       runEnd < nodes.length &&
       nodes[runEnd].toolName === current.toolName &&
-      nodes[runEnd].toolName !== '__thinking__'
+      // A batch must stay inside one task — merging across an objective
+      // change would strip those calls out of their plan group in the UI.
+      nodes[runEnd].objective === current.objective &&
+      !nodes[runEnd].toolName.startsWith('__') &&
+      !nodes[runEnd].isPlanUpdate
     ) {
       runEnd++;
     }
@@ -386,6 +686,7 @@ function applyBatchGrouping(nodes: TraceNode[]): TraceNode[] {
         label: `${runLength} steps`,
         count: runLength,
         eventIds: batchNodes.flatMap((n) => n.eventIds),
+        objective: current.objective,
         isBatch: true,
         durationMs: batchNodes.reduce((sum, n) => sum + (n.durationMs ?? 0), 0) || undefined,
         batchItems: batchNodes.map((n) => ({
@@ -393,6 +694,8 @@ function applyBatchGrouping(nodes: TraceNode[]): TraceNode[] {
           detail: n.detail,
           status: n.status,
           durationMs: n.durationMs,
+          toolInput: n.toolInput,
+          intent: n.intent,
         })),
         detail: batchNodes
           .map((n, idx) => `── [${idx + 1}/${runLength}] ${n.label}\n${n.detail ?? '(no output)'}`)

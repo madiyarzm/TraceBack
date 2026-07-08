@@ -23,7 +23,7 @@ const CHARS_PER_TOKEN   = 4;
 const EST_USD_PER_MTOK  = 6; // blended in/out rate, order-of-magnitude only
 
 export function computeMetrics(nodes: TimelineNode[]): SessionMetrics {
-  const real = nodes.filter((n) => n.toolName !== '__thinking__');
+  const real = nodes.filter((n) => !n.toolName.startsWith('__'));
 
   const first = real[0];
   const last  = real[real.length - 1];

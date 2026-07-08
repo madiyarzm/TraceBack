@@ -22,11 +22,14 @@
   --tb-amber-dim:   rgba(210, 153, 34, 0.1);
   --tb-red:         #f85149;
   --tb-red-dim:     rgba(248, 81, 73, 0.1);
+  --tb-purple:      #a371f7;
 
-  /* UI font: matches VS Code's own interface — much more readable than monospace for labels */
-  --tb-ui-font: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif);
-  /* Code font: used only for raw output, file contents, commands */
-  --tb-font: var(--vscode-editor-font-family, 'Cascadia Code', 'JetBrains Mono', 'Fira Code', Consolas, monospace);
+  /* Bundled fonts (fontsource variable): Inter for UI, JetBrains Mono for data.
+     Consistent premium rendering on every machine, independent of editor config. */
+  --tb-ui-font: 'Inter Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  --tb-mono-font: 'JetBrains Mono Variable', ui-monospace, 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  /* Legacy alias — older components reference --tb-font for code/raw output */
+  --tb-font: var(--tb-mono-font);
   --tb-font-size: 12px;
 }
 
@@ -44,6 +47,13 @@ body {
   font-family: var(--tb-ui-font);
   font-size: var(--tb-font-size);
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Numbers align in columns everywhere (durations, counters, stats) */
+* {
+  font-variant-numeric: tabular-nums;
 }
 
 #root {
@@ -164,6 +174,55 @@ body {
   to   { transform: translateY(0);    opacity: 1; }
 }
 
+/* ─── Card accordion expand ─────────────────────────────────── */
+@keyframes cardBodyIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Chat panel slide in ───────────────────────────────────── */
+@keyframes chatPanelIn {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Matrix: CRT scanlines (whole app, near-subliminal) ─────── */
+.tb-scanlines {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 90;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 0, 0, 0.14) 3px,
+    transparent 4px
+  );
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+}
+
+/* ─── Matrix: glitch-in for anomaly banners ─────────────────── */
+@keyframes glitchIn {
+  0%   { transform: translateX(0);    opacity: 0.4; }
+  20%  { transform: translateX(-3px); opacity: 1; }
+  40%  { transform: translateX(2px)  skewX(-2deg); }
+  60%  { transform: translateX(-1px); }
+  80%  { transform: translateX(1px)  skewX(1deg); }
+  100% { transform: translateX(0); }
+}
+
+/* ─── Matrix: live phosphor rail ─────────────────────────────── */
+.tb-rail-live {
+  background: linear-gradient(
+    to bottom,
+    rgba(63, 185, 80, 0.5),
+    rgba(63, 185, 80, 0.15)
+  ) !important;
+  box-shadow: 0 0 6px rgba(63, 185, 80, 0.35);
+}
+
 /* ─── Blink cursor ──────────────────────────────────────────── */
 @keyframes blink {
   0%, 100% { opacity: 1; }
@@ -180,6 +239,10 @@ body {
 
 .live-dot { animation: livePulse 1.5s ease-in-out infinite; }
 
+/* ─── Task spinner (active task block) ───────────────────────── */
+@keyframes tbSpin { to { transform: rotate(360deg); } }
+.tb-spin { animation: tbSpin 0.8s linear infinite; }
+
 /* ─── Scrollbar ──────────────────────────────────────────────── */
 ::-webkit-scrollbar        { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track  { background: transparent; }
@@ -190,4 +253,43 @@ body {
 select option {
   background: var(--tb-surface);
   color: var(--tb-text);
+}
+
+/* ── Ongoing-feel: active task pulse + newest-action arrival flash ── */
+@keyframes tbActivePulse {
+  0%, 100% { border-color: rgba(88, 166, 255, 0.55); box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.10); }
+  50%      { border-color: rgba(88, 166, 255, 0.25); box-shadow: 0 0 14px 0 rgba(88, 166, 255, 0.06); }
+}
+.tb-task-active { animation: tbActivePulse 2.2s ease-in-out infinite; }
+
+@keyframes tbArrive {
+  0%   { background: rgba(88, 166, 255, 0.14); }
+  100% { background: transparent; }
+}
+.tb-node-arrive { animation: tbArrive 1.4s ease-out 1; border-radius: 8px; }
+
+@keyframes tbSegPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.35; }
+}
+.tb-seg-active { animation: tbSegPulse 1.6s ease-in-out infinite; }
+
+/* ── Elite-feel micro-interactions ── */
+/* Universal press feedback: every button subtly gives under the cursor. */
+button:active:not(:disabled) { transform: translateY(0.5px) scale(0.99); }
+button { transition: transform 0.06s ease; }
+
+/* Keyboard focus that matches the accent system. */
+button:focus-visible, [role='button']:focus-visible, input:focus-visible {
+  outline: 1.5px solid var(--tb-blue);
+  outline-offset: 1px;
+}
+
+/* Accessibility floor: respect reduced motion everywhere. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

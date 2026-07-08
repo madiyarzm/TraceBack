@@ -64,29 +64,30 @@ const CONTAINER: React.CSSProperties = {
   border:       '1px solid var(--tb-border)',
   borderRadius: 4,
   fontFamily:   'var(--tb-mono-font, ui-monospace, monospace)',
-  fontSize:     10.5,
+  fontSize: 11.5,
   lineHeight:   1.5,
   overflow:     'auto',
-  maxHeight:    260,
 };
 
 interface Props {
   oldText:   string;
   newText:   string;
   filePath?: string;
+  /** Card context uses the compact default; the review panel goes taller. */
+  maxHeight?: number;
 }
 
-function DiffViewer({ oldText, newText, filePath }: Props) {
+function DiffViewer({ oldText, newText, filePath, maxHeight = 260 }: Props) {
   const lines = diffLines(oldText, newText);
 
   return (
-    <div style={CONTAINER}>
+    <div style={{ ...CONTAINER, maxHeight }}>
       {filePath && (
         <div style={{
           padding: '4px 10px',
           borderBottom: '1px solid var(--tb-border)',
           color: '#8b949e',
-          fontSize: 10,
+          fontSize: 11,
           position: 'sticky', top: 0,
           background: '#0d1117',
         }}>
