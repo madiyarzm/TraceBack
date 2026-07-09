@@ -14,8 +14,8 @@ describe('firstSentence', () => {
   });
 
   it('truncates long sentences with an ellipsis', () => {
-    const long = 'a'.repeat(200) + '.';
-    expect(firstSentence(long)!.length).toBeLessThanOrEqual(120);
+    const long = 'a'.repeat(300) + '.';
+    expect(firstSentence(long)!.length).toBeLessThanOrEqual(220);
     expect(firstSentence(long)!.endsWith('…')).toBe(true);
   });
 

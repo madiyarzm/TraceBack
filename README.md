@@ -199,6 +199,23 @@ code --install-extension traceback-*.vsix
 
 ---
 
+## Pro tip — richer traces with one CLAUDE.md line
+
+TraceBack mines the sentence Claude writes right before each tool call and shows it on the action card as the call's *intent* — the "why" behind every step. TraceBack already nudges the agent toward this on substantial prompts, but you can make narration a standing habit by adding this to your `~/.claude/CLAUDE.md` (global) or your project's `CLAUDE.md`:
+
+```markdown
+## Working style
+- Before each tool call, state in one concise sentence what you are about
+  to do and why. One sentence, then the call — no filler like "Perfect!"
+  or bare "Now let me...".
+- When you make a judgment call (an assumption, a trade-off, choosing one
+  approach over another), say so explicitly in prose.
+```
+
+The first rule feeds the intent subtitles on every card; the second feeds TraceBack's decision & assumption ledger. Both cost the agent a few tokens per step and turn the trace from a list of tool names into a narrated decision log you can actually review.
+
+---
+
 ## Commands
 
 | Command | Description |

@@ -58,4 +58,15 @@ describe('todoInstructionFor', () => {
     expect(firm).toMatch(/in_progress/);
     expect(firm).toMatch(/completed/);
   });
+
+  it('soft and firm both ask for a one-sentence narration before tool calls', () => {
+    const soft = todoInstructionFor(
+      'please refactor the session parser so it can handle multiple formats'
+    );
+    const firm = todoInstructionFor(
+      'first do this thing. then do that thing. after that verify it. finally ship it.'
+    );
+    expect(soft).toMatch(/before each tool call/i);
+    expect(firm).toMatch(/before each tool call/i);
+  });
 });

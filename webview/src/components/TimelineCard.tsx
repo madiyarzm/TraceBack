@@ -322,15 +322,15 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
           </span>
         </div>
 
-        {/* ── Intent subtitle: why the agent made this call ── */}
+        {/* ── Intent subtitle: why the agent made this call. Never clamped —
+              the stated reason is the trace's most valuable line, and an
+              ellipsis here hides exactly the part that mattered. ── */}
         {node.intent && !node.isBatch && (
           <div style={{
             padding: '0 10px 6px 28px',
             fontSize: 11.5, lineHeight: 1.4,
             color: 'var(--tb-text-muted)',
-            overflow: 'hidden', textOverflow: 'ellipsis',
-            display: '-webkit-box',
-            WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+            overflowWrap: 'anywhere',
           }}>
             {node.intent}
           </div>

@@ -69,7 +69,7 @@ export function noteTranscript(sessionId: string, transcriptPath: string): void 
   _transcriptPaths.set(sessionId, transcriptPath);
 }
 
-const INTENT_MAX_CHARS = 120;
+const INTENT_MAX_CHARS = 220;
 const INTENT_MIN_CHARS = 30;
 
 /** Reaction interjections: as a punctuated opener ("Perfect! …") they get
@@ -216,7 +216,7 @@ export async function extractDecisions(transcriptPath: string): Promise<LedgerIt
 
 /**
  * The assistant reasoning behind a tool call: the nearest preceding text
- * block's first sentence, ≤120 chars. Returns null on any miss — the intent
+ * block's first sentence, ≤INTENT_MAX_CHARS. Returns null on any miss — the intent
  * field is best-effort everywhere and must never block rendering.
  *
  * `fromEnd` identifies the target tool_use counted BACKWARD from the last
