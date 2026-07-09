@@ -1,5 +1,6 @@
 import type { TimelineNode } from './components/TimelineCard';
 import type { AnomalyRecordUI } from './useSessionFeed';
+import { isExpectedStumble } from './payloadParser';
 
 /**
  * Prompt-as-chapter model: a session is a book, each UserPromptSubmit opens a
@@ -41,7 +42,9 @@ export interface PromptChapter {
   actionCount: number;
   errorCount:  number;
   durationMs:  number;
-  /** Plan snapshot at the END of this chapter's slice. */
+  /** This chapter's OWN plan: items created, updated, or worked on inside its
+   *  slice — never the whole session snapshot, so a task planned two prompts
+   *  ago can't resurface here as "waiting" or pad the progress denominator. */
   plan:        ChapterPlanItem[];
   taskGroups:  ChapterTaskGroup[];
 }
@@ -54,11 +57,17 @@ function fileNameOf(input?: Record<string, unknown>): string | null {
   return p.split('/').filter(Boolean).pop() ?? null;
 }
 
-/** Plan mutation applied per node — mirrors traceStore's applyPlanTool. */
+/** Stable identity for a plan item — task id when known, content otherwise. */
+const keyOf = (it: ChapterPlanItem) => it.id ?? it.content;
+
+/** Plan mutation applied per node — mirrors traceStore's applyPlanTool.
+ *  Every item this node creates or modifies gets its key added to `touched`,
+ *  which scopes the chapter's plan view to the tasks it actually dealt with. */
 function applyPlanNode(
   plan: ChapterPlanItem[],
   taskCounterRef: { n: number },
   node: TimelineNode,
+  touched: Set<string>,
 ): ChapterPlanItem[] {
   const input = node.toolInput ?? {};
   if (node.toolName === 'TodoWrite' && Array.isArray(input.todos)) {
@@ -71,7 +80,10 @@ function applyPlanNode(
         activeForm: typeof raw.activeForm === 'string' ? raw.activeForm : undefined,
       });
     }
-    return items.length ? items : plan;
+    if (!items.length) return plan;
+    // A TodoWrite restates the whole plan — every item counts as this chapter's.
+    for (const it of items) touched.add(keyOf(it));
+    return items;
   }
   if (node.toolName === 'TaskCreate' && typeof input.subject === 'string') {
     // The node's detail holds the tool response, which carries the REAL
@@ -79,12 +91,14 @@ function applyPlanNode(
     // session isn't the conversation's first (tasks then stuck "waiting").
     const m = /#(\d+)/.exec(node.detail ?? '');
     taskCounterRef.n++;
-    return [...plan, {
+    const item: ChapterPlanItem = {
       id: m ? m[1] : `?${taskCounterRef.n}`,
       content: input.subject,
       status: 'pending',
       activeForm: typeof input.activeForm === 'string' ? input.activeForm : undefined,
-    }];
+    };
+    touched.add(keyOf(item));
+    return [...plan, item];
   }
   if (node.toolName === 'TaskUpdate') {
     const rawId = input.taskId;
@@ -94,6 +108,7 @@ function applyPlanNode(
       : null;
     if (!wanted) return plan;
     const matches = (it: ChapterPlanItem) => it.id === wanted || it.id === `?${wanted}`;
+    for (const it of plan) if (matches(it)) touched.add(keyOf(it));
     return plan
       .filter((it) => !(matches(it) && input.status === 'deleted'))
       .map((it) => !matches(it) ? it : {
@@ -111,8 +126,14 @@ function applyPlanNode(
 
 export function computeChapters(nodes: TimelineNode[]): PromptChapter[] {
   const chapters: PromptChapter[] = [];
-  let current: PromptChapter | null = null;
+  // The running snapshot spans the whole session (a TaskUpdate must find tasks
+  // created under earlier prompts), but each chapter only KEEPS the items it
+  // touched (created/updated) or ran actions under — otherwise every task ever
+  // planned leaks into every later chapter as a stale "waiting" row and pads
+  // its "N of M tasks" denominator.
   let plan: ChapterPlanItem[] = [];
+  const touchedBy = new Map<PromptChapter, Set<string>>();
+  let current: PromptChapter | null = null;
   const taskCounter = { n: 0 };
 
   function open(id: string, text: string, timestamp: number): PromptChapter {
@@ -120,10 +141,11 @@ export function computeChapters(nodes: TimelineNode[]): PromptChapter[] {
       id, index: chapters.length + 1, text, timestamp,
       endTimestamp: Infinity,
       nodes: [], actionCount: 0, errorCount: 0, durationMs: 0,
-      plan, // inherit the running snapshot — a queued prompt still has a plan
+      plan: [],
       taskGroups: [],
     };
     chapters.push(chapter);
+    touchedBy.set(chapter, new Set());
     return chapter;
   }
 
@@ -137,9 +159,10 @@ export function computeChapters(nodes: TimelineNode[]): PromptChapter[] {
       // real prompt.
       if (text.startsWith('/')) continue;
       // Re-submits: an identical or corrected prompt arriving before the
-      // current chapter did any work supersedes it in place, so a
-      // double-fired prompt doesn't leave an empty duplicate chapter.
-      if (current && current.actionCount === 0) {
+      // current chapter did ANYTHING (actions or plan updates both count —
+      // a prompt that only planned is not an empty duplicate) supersedes it
+      // in place, so a double-fired prompt doesn't leave a ghost chapter.
+      if (current && current.nodes.length === 0) {
         current.id = node.id;
         current.text = text;
         current.timestamp = node.timestamp;
@@ -150,18 +173,31 @@ export function computeChapters(nodes: TimelineNode[]): PromptChapter[] {
       continue;
     }
     if (!current) current = open('', '(before first prompt)', node.timestamp);
-    if (node.isPlanUpdate) plan = applyPlanNode(plan, taskCounter, node);
     const c = current;
+    if (node.isPlanUpdate) plan = applyPlanNode(plan, taskCounter, node, touchedBy.get(c)!);
     c.nodes.push(node);
     c.plan = plan;
     if (isReal(node) && !node.isPlanUpdate) {
       c.actionCount += node.count;
-      c.errorCount  += node.status === 'error' ? 1 : 0;
+      c.errorCount  += node.status === 'error' && !isExpectedStumble(node) ? 1 : 0;
       c.durationMs  += node.durationMs ?? 0;
     }
   }
 
-  for (const c of chapters) c.taskGroups = buildTaskGroups(c);
+  for (const c of chapters) {
+    // Scope the end-of-slice snapshot down to this chapter's own tasks:
+    // touched by a plan tool inside the slice, or matching an objective its
+    // actions actually ran under (work continuing on an older task).
+    const touched = touchedBy.get(c)!;
+    const objectives = new Set<string>();
+    for (const n of c.nodes) if (n.objective) objectives.add(n.objective);
+    c.plan = c.plan.filter(
+      (p) => touched.has(keyOf(p)) ||
+             objectives.has(p.content) ||
+             (p.activeForm !== undefined && objectives.has(p.activeForm))
+    );
+    c.taskGroups = buildTaskGroups(c);
+  }
   return chapters;
 }
 
@@ -182,7 +218,7 @@ function buildTaskGroups(chapter: PromptChapter): ChapterTaskGroup[] {
       groups.set(key, g);
     }
     g.nodes.push(node);
-    if (node.status === 'error') g.errorCount++;
+    if (node.status === 'error' && !isExpectedStumble(node)) g.errorCount++;
     const items = node.isBatch && node.batchItems ? node.batchItems : [node];
     for (const item of items) {
       const f = fileNameOf(item.toolInput);
@@ -266,7 +302,7 @@ export function computePhaseBlocks(nodes: TimelineNode[]): PhaseBlock[] {
   for (const b of blocks) {
     for (const n of b.nodes) {
       b.actionCount += n.count;
-      b.errorCount  += n.status === 'error' ? 1 : 0;
+      b.errorCount  += n.status === 'error' && !isExpectedStumble(n) ? 1 : 0;
       b.durationMs  += n.durationMs ?? 0;
     }
     b.summary = phaseSummary(b.kind, b.nodes);
@@ -312,7 +348,10 @@ export function pendingPlanItems(chapter: PromptChapter): ChapterPlanItem[] {
   const covered = new Set(chapter.taskGroups.map((g) => g.objective));
   return chapter.plan.filter(
     (p) => p.status === 'pending' &&
-           !covered.has(p.content) && !covered.has(p.activeForm ?? '')
+           !covered.has(p.content) &&
+           // ?? '' would let the unattributed group ('') swallow every item
+           // that has no activeForm — they'd silently vanish from "waiting".
+           (p.activeForm === undefined || !covered.has(p.activeForm))
   );
 }
 

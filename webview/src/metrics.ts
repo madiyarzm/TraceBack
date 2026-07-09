@@ -1,4 +1,5 @@
 import { TimelineNode } from './components/TimelineCard';
+import { isExpectedStumble } from './payloadParser';
 
 /**
  * Aggregate session metrics, derived purely from the node list the extension
@@ -42,7 +43,7 @@ export function computeMetrics(nodes: TimelineNode[]): SessionMetrics {
   return {
     totalDurationMs,
     toolCount:  real.reduce((sum, n) => sum + n.count, 0),
-    errorCount: real.filter((n) => n.status === 'error').length,
+    errorCount: real.filter((n) => n.status === 'error' && !isExpectedStumble(n)).length,
     estTokens,
     estCostUsd: (estTokens / 1_000_000) * EST_USD_PER_MTOK,
     isEstimated: true,

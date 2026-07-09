@@ -1,6 +1,6 @@
 import { memo, useRef, useState } from 'react';
 import DiffViewer from './DiffViewer';
-import { parseToolPayload, formatBytes, summarizeOutput, copyText } from '../payloadParser';
+import { parseToolPayload, formatBytes, summarizeOutput, copyText, isExpectedStumble } from '../payloadParser';
 import { AlertIcon, CheckIcon, ChevronIcon, CopyIcon, FileIcon, ListChecksIcon, PencilIcon } from './Icons';
 import ScrambleText from './ScrambleText';
 
@@ -187,11 +187,14 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
     );
   }
 
-  const color    = STATUS_COLOR[node.status];
+  // An expected stumble (Read on a directory) keeps its explanation but loses
+  // the red: the agent recovers by itself, so alarm styling would cry wolf.
+  const stumble  = node.status === 'error' && isExpectedStumble(node);
+  const color    = stumble ? '#7d8590' : STATUS_COLOR[node.status];
   const tcolor   = toolColor(node.toolName);
   const icon     = TOOL_ICON[node.toolName] ?? '·';
   const duration = formatDuration(node.durationMs);
-  const isError  = node.status === 'error';
+  const isError  = node.status === 'error' && !stumble;
 
   return (
     <div
@@ -387,7 +390,7 @@ function TimelineCard({ node, expanded, flagged, historyReason, bare, onToggle }
 function CuratedBody({ node }: { node: TimelineNode }) {
   const [showRaw, setShowRaw] = useState(false);
   const parsed  = parseToolPayload(node.toolName, node.toolInput, node.detail);
-  const isError = node.status === 'error';
+  const isError = node.status === 'error' && !isExpectedStumble(node);
   const hasRaw  = !!node.detail || !!(node.toolInput && Object.keys(node.toolInput).length);
 
   return (
@@ -418,7 +421,9 @@ function CuratedBody({ node }: { node: TimelineNode }) {
 
       {/* ── Outcome: deterministic one-line "what happened" ── */}
       {(() => {
-        const outcome = summarizeOutput(node.detail, isError, node);
+        // Raw status here, not the display flag: a benign stumble still needs
+        // its "path is a directory" explanation, just without the red paint.
+        const outcome = summarizeOutput(node.detail, node.status === 'error', node);
         if (!outcome) return null;
         return (
           <div style={{
