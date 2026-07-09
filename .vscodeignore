@@ -32,5 +32,6 @@ webview/tailwind.config.js
 webview/index.html
 assets/traceback_icon.png
 assets/icon.png
+assets/icon_v2.png
 tests/**
 assets/traceback_demo.gif

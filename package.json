@@ -1,11 +1,11 @@
 {
   "name": "traceback-ai",
-  "displayName": "TraceBack \u2014 AI Agent Observability",
+  "displayName": "TraceBack — AI Agent Observability",
   "description": "Live timeline, anomaly detection, breakpoints, and guards for AI coding agents. Watch, pause, and steer Claude Code sessions from your sidebar.",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "publisher": "madiyarzhunussov",
   "license": "MIT",
-  "icon": "assets/icon_v2.png",
+  "icon": "assets/icon_v3.png",
   "galleryBanner": {
     "color": "#07090d",
     "theme": "dark"
