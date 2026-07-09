@@ -399,6 +399,7 @@ function TaskBlock({ group, isLast, isLive, newestId, expandedId, onToggle }: {
           <PhaseBlockRow
             key={i}
             block={b}
+            live={isLive}
             defaultOpen={isLive && isLast && i === blocks.length - 1}
             newestId={newestId}
             expandedId={expandedId}
@@ -486,6 +487,7 @@ function TaskBlock({ group, isLast, isLive, newestId, expandedId, onToggle }: {
         }}>
           {group.nodes.map((n) => (
             <ActionCardRow key={n.id} node={n} highlight={n.id === newestId}
+                           working={isLive && n.status === 'pending'}
                            expandedId={expandedId} onToggle={onToggle} />
           ))}
         </div>
@@ -506,8 +508,9 @@ const PHASE_STYLE: Record<PhaseBlock['kind'], { verb: string; icon: React.ReactN
   actions: { verb: 'Actions', icon: <DotsIcon size={12} /> },
 };
 
-function PhaseBlockRow({ block, defaultOpen, newestId, expandedId, onToggle }: {
+function PhaseBlockRow({ block, live = false, defaultOpen, newestId, expandedId, onToggle }: {
   block:       PhaseBlock;
+  live?:       boolean;
   defaultOpen: boolean;
   newestId:    string | null;
   expandedId:  string | null;
@@ -546,11 +549,15 @@ function PhaseBlockRow({ block, defaultOpen, newestId, expandedId, onToggle }: {
           flex: 1, minWidth: 0,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>
-          {block.kind === 'actions' || !block.summary ? (
+          {!block.summary ? (
             block.label
           ) : (
             <>
-              <span style={{ color: 'var(--tb-text-muted)' }}>{ps.verb} </span>
+              {/* "Actions" blocks name their contents directly — a verb-less
+                  mono summary beats a row that just says "Actions". */}
+              {block.kind !== 'actions' && (
+                <span style={{ color: 'var(--tb-text-muted)' }}>{ps.verb} </span>
+              )}
               <span style={{ fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)', fontSize: 13.5 }}>
                 {block.summary}
               </span>
@@ -584,6 +591,7 @@ function PhaseBlockRow({ block, defaultOpen, newestId, expandedId, onToggle }: {
         }}>
           {block.nodes.map((n) => (
             <ActionCardRow key={n.id} node={n} highlight={n.id === newestId}
+                           working={live && n.status === 'pending'}
                            expandedId={expandedId} onToggle={onToggle} />
           ))}
         </div>
@@ -631,13 +639,16 @@ function StatusMark({ isDone, isActive, isLive }: {
 }
 
 /** Action card — the shared TimelineCard, whose leading dot doubles as the
- *  status indicator inside a task block. The newest live card flashes in. */
-function ActionCardRow({ node, highlight = false, expandedId, onToggle }: {
-  node: TimelineNode; highlight?: boolean;
+ *  status indicator inside a task block. The newest live card flashes in;
+ *  a still-running call breathes green until its PostToolUse lands. */
+function ActionCardRow({ node, highlight = false, working = false, expandedId, onToggle }: {
+  node: TimelineNode; highlight?: boolean; working?: boolean;
   expandedId: string | null; onToggle: (id: string) => void;
 }) {
+  const cls = [highlight ? 'tb-node-arrive' : '', working ? 'tb-node-working' : '']
+    .filter(Boolean).join(' ');
   return (
-    <div className={highlight ? 'tb-node-arrive' : ''}>
+    <div className={cls}>
       <TimelineCard
         bare
         node={node}

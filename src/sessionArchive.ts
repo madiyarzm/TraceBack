@@ -33,6 +33,19 @@ export interface ArchivedSession extends ArchivedSessionMeta {
   ledger?:         TraceSession['ledger'];
 }
 
+/** Mirror of the webview's isExpectedStumble (payloadParser.ts): Read on a
+ *  directory is a probe the agent recovers from itself, not a counted error —
+ *  the history-rail badge must agree with the counts inside the session. */
+function isExpectedStumble(n: {
+  toolName: string; detail?: string; toolInput?: Record<string, unknown>;
+}): boolean {
+  if (n.toolName !== 'Read') return false;
+  if (n.detail && /EISDIR|is a directory|illegal operation on a directory/i.test(n.detail)) return true;
+  const p = (n.toolInput?.file_path ?? n.toolInput?.path) as string | undefined;
+  const last = p?.split('/').filter(Boolean).pop() ?? '';
+  return !!p && last !== '' && !last.includes('.') && !n.detail?.trim();
+}
+
 function fileFor(dir: string, id: string): string {
   // Session ids come from Claude Code (uuid-ish) but sanitize defensively.
   return path.join(dir, `${id.replace(/[^\w.-]/g, '_')}.json`);
@@ -46,7 +59,7 @@ export function serializeSession(session: TraceSession): ArchivedSession {
     startedAt:    session.startedAt,
     endedAt:      Date.now(),
     nodeCount:    realNodes.length,
-    errorCount:   realNodes.filter((n) => n.status === 'error').length,
+    errorCount:   realNodes.filter((n) => n.status === 'error' && !isExpectedStumble(n)).length,
     anomalyCount: session.anomalyHistory.length,
     tokens:       session.contextTokens,
     stopped:      session.stopped,

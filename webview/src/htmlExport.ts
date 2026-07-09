@@ -2,6 +2,7 @@ import { TimelineNode, formatDuration } from './components/TimelineCard';
 import { computeFileChanges, summarizeChanges } from './fileChanges';
 import { computeMetrics, formatTokens } from './metrics';
 import { anomaliesFor, computeChapters, pendingPlanItems, PromptChapter } from './chapters';
+import { isExpectedStumble } from './payloadParser';
 import type { AnomalyRecordUI } from './useSessionFeed';
 
 /**
@@ -37,7 +38,8 @@ const STATUS_DOT: Record<string, string> = {
 };
 
 function actionRow(n: TimelineNode): string {
-  const dot = STATUS_DOT[n.status] ?? '#7d8590';
+  const stumble = n.status === 'error' && isExpectedStumble(n);
+  const dot = stumble ? '#7d8590' : STATUS_DOT[n.status] ?? '#7d8590';
   const dur = formatDuration(n.durationMs);
   const intent = n.intent ? `<div class="intent">${esc(n.intent)}</div>` : '';
   const raw = n.detail
@@ -50,7 +52,7 @@ function actionRow(n: TimelineNode): string {
         }</div>`
       ).join('')}</div>`
     : '';
-  return `<div class="row${n.status === 'error' ? ' err' : ''}">
+  return `<div class="row${n.status === 'error' && !stumble ? ' err' : ''}">
   <span class="dot" style="background:${dot}"></span>
   <span class="tool">${esc(n.toolName)}</span>
   <span class="lbl">${esc(n.isBatch ? `${n.count} steps` : n.label)}</span>

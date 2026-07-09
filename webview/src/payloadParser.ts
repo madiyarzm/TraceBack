@@ -90,6 +90,25 @@ function looksLikeDirectory(p: string): boolean {
   return last !== '' && !last.includes('.');
 }
 
+const DIR_ERROR_RE = /EISDIR|is a directory|illegal operation on a directory/i;
+
+/**
+ * An "error" the agent expects and recovers from on its own — today: Read on a
+ * directory (it just retries with ls or glob). These get explained on the card
+ * but are excluded from error counts and red styling: a probe, not a failure.
+ */
+export function isExpectedStumble(node: {
+  toolName?:  string;
+  status?:    string;
+  toolInput?: Record<string, unknown>;
+  detail?:    string;
+}): boolean {
+  if (node.status !== 'error' || node.toolName !== 'Read') return false;
+  if (node.detail && DIR_ERROR_RE.test(node.detail)) return true;
+  const p = (node.toolInput?.file_path ?? node.toolInput?.path) as string | undefined;
+  return !!p && looksLikeDirectory(p) && !node.detail?.trim();
+}
+
 /**
  * Deterministic one-line outcome for a tool's output — answers "what happened"
  * without dumping the payload. No LLM: shape-matching only. `node` context
@@ -101,12 +120,8 @@ export function summarizeOutput(
   node?: { toolName?: string; toolInput?: Record<string, unknown> },
 ): string | null {
   // Known stumble: Read on a directory. Explain it instead of "failed".
-  if (isError && node?.toolName === 'Read') {
-    const p = (node.toolInput?.file_path ?? node.toolInput?.path) as string | undefined;
-    const dirError = detail && /EISDIR|is a directory|illegal operation on a directory/i.test(detail);
-    if (dirError || (p && looksLikeDirectory(p) && !detail?.trim())) {
-      return 'path is a directory — Read only works on files (the agent usually retries with ls or glob)';
-    }
+  if (isError && isExpectedStumble({ ...node, status: 'error', detail })) {
+    return 'path is a directory — Read only works on files (the agent usually retries with ls or glob)';
   }
 
   if (!detail || detail.trim().length === 0) return isError ? 'failed, no output' : null;

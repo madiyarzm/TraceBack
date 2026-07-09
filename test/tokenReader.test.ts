@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { extractDecisions, firstSentence, isTranscriptPath, meaningfulIntent, mineDecisions, readContextTokens } from '../src/tokenReader';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import {
+  extractDecisions, extractIntentForTool, firstSentence, isTranscriptPath,
+  meaningfulIntent, mineDecisions, noteTranscript, readContextTokens,
+} from '../src/tokenReader';
 
 describe('firstSentence', () => {
   it('takes the first sentence and collapses whitespace', () => {
@@ -8,8 +14,8 @@ describe('firstSentence', () => {
   });
 
   it('truncates long sentences with an ellipsis', () => {
-    const long = 'a'.repeat(200) + '.';
-    expect(firstSentence(long)!.length).toBeLessThanOrEqual(120);
+    const long = 'a'.repeat(300) + '.';
+    expect(firstSentence(long)!.length).toBeLessThanOrEqual(220);
     expect(firstSentence(long)!.endsWith('…')).toBe(true);
   });
 
@@ -25,25 +31,28 @@ describe('meaningfulIntent', () => {
     expect(meaningfulIntent(text)).toBe(text);
   });
 
-  it('rejects post-action reactions regardless of length', () => {
-    expect(meaningfulIntent('Perfect! The tests pass now and everything is working as expected.')).toBeNull();
+  it('keeps "Now let me…" action announcements — that IS the intent', () => {
+    expect(meaningfulIntent("Now I'll update the second file with the same pattern as before."))
+      .toBe("Now I'll update the second file with the same pattern as before.");
+    expect(meaningfulIntent('Now let me check whether the webview picks up the new message shape.'))
+      .toBe('Now let me check whether the webview picks up the new message shape.');
+  });
+
+  it('strips reaction openers instead of dropping the whole block', () => {
+    expect(meaningfulIntent('Perfect! Next I will rework the export pipeline to stream chunks.'))
+      .toBe('Next I will rework the export pipeline to stream chunks.');
+    expect(meaningfulIntent('Right — the LandingPage already has its own light-themed footer stacking below.'))
+      .toBe('the LandingPage already has its own light-themed footer stacking below.');
+  });
+
+  it('rejects pure reactions and commentary', () => {
     expect(meaningfulIntent('Excellent!')).toBeNull();
-    expect(meaningfulIntent('Good progress on the refactor so far, this is coming together nicely.')).toBeNull();
     expect(meaningfulIntent('Great — that fixed it.')).toBeNull();
+    expect(meaningfulIntent('Good progress on the refactor so far, this is coming together nicely.')).toBeNull();
   });
 
-  it('rejects connective filler openers', () => {
-    expect(meaningfulIntent("Now I'll update the second file with the same pattern as before.")).toBeNull();
-    expect(meaningfulIntent('Now let me check whether the webview picks up the new message shape.')).toBeNull();
-    expect(meaningfulIntent("I'll now rerun the whole suite to confirm nothing else regressed.")).toBeNull();
-  });
-
-  it('rejects anything under 40 characters', () => {
+  it('rejects stubs under the minimum length', () => {
     expect(meaningfulIntent('Checking the config.')).toBeNull();
-  });
-
-  it('judges only the first sentence', () => {
-    expect(meaningfulIntent('Perfect! Next I will rework the export pipeline to stream chunks.')).toBeNull();
   });
 });
 
@@ -93,6 +102,52 @@ describe('mineDecisions', () => {
   it('strips inline markdown from card text', () => {
     const items = mine('I went with parsing the id from the response **#18** rather than the `taskCounter` fallback.');
     expect(items[0].text).toBe('I went with parsing the id from the response #18 rather than the taskCounter fallback.');
+  });
+});
+
+describe('extractIntentForTool — attribution', () => {
+  const assistantLine = (blocks: unknown[], sidechain = false) =>
+    JSON.stringify({ type: 'assistant', isSidechain: sidechain || undefined,
+                     message: { content: blocks } });
+  const text = (t: string) => ({ type: 'text', text: t });
+  const tool = (name: string) => ({ type: 'tool_use', name, input: {} });
+
+  function writeTranscript(sessionId: string, lines: string[]): void {
+    const p = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'tb-intent-')), 'x.jsonl');
+    fs.writeFileSync(p, lines.join('\n') + '\n');
+    noteTranscript(sessionId, p);
+  }
+
+  it('attributes the preceding sentence to the FIRST call of a burst only', async () => {
+    writeTranscript('s-burst', [
+      assistantLine([
+        text('Now let me read both config files to compare their formats.'),
+        tool('Read'), tool('Read'),
+      ]),
+    ]);
+    expect(await extractIntentForTool('s-burst', 1, 'Read'))
+      .toBe('Now let me read both config files to compare their formats.');
+    // the sibling gets null, not a duplicate subtitle
+    expect(await extractIntentForTool('s-burst', 0, 'Read')).toBeNull();
+  });
+
+  it('aligns by tool name, unaffected by other tools around the target', async () => {
+    writeTranscript('s-name', [
+      assistantLine([text('Now let me check the failing test file for the broken assertion.'), tool('Read')]),
+      assistantLine([tool('Bash'), tool('Bash')]),
+    ]);
+    // Two Bash calls follow, but counting Reads only still lands on the Read.
+    expect(await extractIntentForTool('s-name', 0, 'Read'))
+      .toBe('Now let me check the failing test file for the broken assertion.');
+  });
+
+  it('ignores sidechain (subagent) lines entirely', async () => {
+    writeTranscript('s-side', [
+      assistantLine([text('Now let me inspect the extension manifest for the icon path.'), tool('Read')]),
+      assistantLine([text('Subagent chatter that would steal the attribution slot.'), tool('Read')], true),
+    ]);
+    expect(await extractIntentForTool('s-side', 0, 'Read'))
+      .toBe('Now let me inspect the extension manifest for the icon path.');
   });
 });
 

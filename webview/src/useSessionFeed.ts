@@ -5,7 +5,7 @@ import { TimelineNode, formatDuration } from './components/TimelineCard';
 import { AnomalyStateUI } from './components/SessionOdometer';
 import { SessionPlanUI } from './components/ObjectiveHeader';
 import { SessionSummary } from './components/SessionPicker';
-import { summarizeOutput, copyText } from './payloadParser';
+import { summarizeOutput, copyText, isExpectedStumble } from './payloadParser';
 import { formatTokens, formatCost, computeMetrics } from './metrics';
 import { anomaliesFor, computeChapters, pendingPlanItems } from './chapters';
 import { buildSessionHtml } from './htmlExport';
@@ -118,7 +118,8 @@ export function buildSessionReport(s: FullSessionData): string {
       let step = 0;
       for (const n of g.nodes) {
         step++;
-        const icon = n.status === 'error' ? '❌' : n.status === 'pending' ? '⏳' : '✅';
+        const failed = n.status === 'error' && !isExpectedStumble(n);
+        const icon = failed ? '❌' : n.status === 'pending' ? '⏳' : '✅';
         const d    = formatDuration(n.durationMs);
         lines.push(`${step}. ${icon} **${n.toolName}** — ${n.isBatch ? `${n.count} steps` : n.label}${d ? ` _(${d})_` : ''}`);
         if (n.intent) lines.push(`   - _${n.intent}_`);

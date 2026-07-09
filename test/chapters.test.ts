@@ -232,6 +232,15 @@ describe('phase block summaries', () => {
     expect(blocks[0].summary).toBe('codename.ts, PanelApp.tsx +1');
   });
 
+  it('names the concrete objects of an Actions block, not bare tool names', () => {
+    const blocks = computePhaseBlocks([
+      node({ toolName: 'ToolSearch', toolInput: { query: 'select:TaskCreate' } }),
+      node({ toolName: 'Grep', toolInput: { pattern: 'errorCount' } }),
+    ]);
+    expect(blocks[0].label).toBe('Actions');
+    expect(blocks[0].summary).toBe('ToolSearch select:TaskCreate, Grep errorCount');
+  });
+
   it('names the command stems a Running block executed, deduped', () => {
     const blocks = computePhaseBlocks([
       node({ toolName: 'Bash', toolInput: { command: 'npm test' } }),
@@ -239,6 +248,102 @@ describe('phase block summaries', () => {
       node({ toolName: 'Bash', toolInput: { command: 'npx tsc --noEmit' } }),
     ]);
     expect(blocks[0].summary).toBe('npm test, npx tsc');
+  });
+});
+
+describe('chapter plan scoping', () => {
+  it('does not leak stale pending tasks into later chapters', () => {
+    const nodes = [
+      prompt('build the footer', T0),
+      node({ toolName: 'TaskCreate', isPlanUpdate: true, timestamp: T0 + 1,
+             toolInput: { subject: 'Create Footer component' },
+             detail: 'Task #1 created successfully' }),
+      node({ toolName: 'TaskCreate', isPlanUpdate: true, timestamp: T0 + 2,
+             toolInput: { subject: 'Integrate Footer into app layout' },
+             detail: 'Task #2 created successfully' }),
+      node({ toolName: 'TaskUpdate', isPlanUpdate: true, timestamp: T0 + 3,
+             toolInput: { taskId: '1', status: 'completed' } }),
+      node({ toolName: 'Edit', timestamp: T0 + 4 }),
+      prompt('now commit it', T0 + 10_000),
+      node({ toolName: 'Bash', timestamp: T0 + 11_000 }),
+    ];
+    const [c1, c2] = computeChapters(nodes);
+    // Chapter 1 owns both tasks — including the still-pending one.
+    expect(c1.plan.map((p) => p.content)).toEqual(
+      ['Create Footer component', 'Integrate Footer into app layout']);
+    expect(pendingPlanItems(c1).map((p) => p.content))
+      .toEqual(['Integrate Footer into app layout']);
+    // Chapter 2 touched no tasks: no inherited plan, no waiting rows,
+    // no "1 of 2 tasks" progress ghost.
+    expect(c2.plan).toEqual([]);
+    expect(pendingPlanItems(c2)).toEqual([]);
+  });
+
+  it('shows an old task in a later chapter once that chapter updates it', () => {
+    const nodes = [
+      prompt('plan it', T0),
+      node({ toolName: 'TaskCreate', isPlanUpdate: true, timestamp: T0 + 1,
+             toolInput: { subject: 'Fix duplicate footer' },
+             detail: 'Task #7 created successfully' }),
+      prompt('go finish that task', T0 + 10_000),
+      node({ toolName: 'TaskUpdate', isPlanUpdate: true, timestamp: T0 + 11_000,
+             toolInput: { taskId: '7', status: 'completed' } }),
+      node({ toolName: 'Edit', timestamp: T0 + 12_000 }),
+    ];
+    const [c1, c2] = computeChapters(nodes);
+    expect(c1.plan.map((p) => p.status)).toEqual(['pending']);
+    expect(c2.plan).toHaveLength(1);
+    expect(c2.plan[0].status).toBe('completed');
+  });
+
+  it('keeps a prior task visible when a later chapter runs actions under it', () => {
+    const nodes = [
+      prompt('plan it', T0),
+      node({ toolName: 'TodoWrite', isPlanUpdate: true, timestamp: T0 + 1, toolInput: {
+        todos: [{ content: 'task A', status: 'in_progress', activeForm: 'Doing task A' }],
+      } }),
+      node({ toolName: 'Read', objective: 'Doing task A', timestamp: T0 + 2 }),
+      prompt('continue', T0 + 10_000),
+      node({ toolName: 'Edit', objective: 'Doing task A', timestamp: T0 + 11_000 }),
+    ];
+    const [, c2] = computeChapters(nodes);
+    expect(c2.plan.map((p) => p.content)).toEqual(['task A']);
+    expect(c2.taskGroups[0].status).toBe('in_progress');
+  });
+
+  it('a queued prompt with no work yet shows no inherited plan', () => {
+    const nodes = [
+      prompt('build it', T0),
+      node({ toolName: 'TaskCreate', isPlanUpdate: true, timestamp: T0 + 1,
+             toolInput: { subject: 'task A' }, detail: 'Task #1 created successfully' }),
+      node({ toolName: 'Read', timestamp: T0 + 2 }),
+      prompt('queued follow-up', T0 + 10_000),
+    ];
+    const chapters = computeChapters(nodes);
+    expect(chapters).toHaveLength(2);
+    expect(chapters[1].plan).toEqual([]);
+  });
+});
+
+describe('expected stumbles (Read on a directory)', () => {
+  const dirRead = () => node({
+    toolName: 'Read', status: 'error', timestamp: T0 + 2,
+    toolInput: { file_path: '/repo/frontend-vite/src' },
+    detail: 'EISDIR: illegal operation on a directory, read',
+  });
+
+  it('does not count toward chapter error counts', () => {
+    const chapters = computeChapters([
+      prompt('p', T0),
+      dirRead(),
+      node({ toolName: 'Bash', status: 'error', timestamp: T0 + 3 }),
+    ]);
+    expect(chapters[0].errorCount).toBe(1); // only the real bash failure
+  });
+
+  it('does not count toward phase block error counts', () => {
+    const blocks = computePhaseBlocks([dirRead(), dirRead()]);
+    expect(blocks[0].errorCount).toBe(0);
   });
 });
 

@@ -31,17 +31,27 @@ export function classifyPrompt(prompt: string): TodoNudge {
   return 'soft';
 }
 
+/** Asks for exactly what the intent extractor mines: a short stated reason
+ *  directly before each tool call. Cheap for the agent, and it turns the
+ *  trace from a list of tool names into a narrated decision log. */
+const NARRATION_ASK =
+  'Before each tool call, state in one concise sentence what you are about ' +
+  'to do and why.';
+
 export function todoInstructionFor(prompt: string): string | null {
   switch (classifyPrompt(prompt)) {
     case 'none':
       return null;
     case 'soft':
-      return 'If this task has multiple steps, consider creating a todo list before starting.';
+      return (
+        'If this task has multiple steps, consider creating a todo list ' +
+        'before starting. ' + NARRATION_ASK
+      );
     case 'firm':
       return (
         'This looks like a multi-step task. Break it into a todo list before ' +
         'starting, and keep it live: mark each task in_progress when you begin ' +
-        'it and completed when you finish it.'
+        'it and completed when you finish it. ' + NARRATION_ASK
       );
   }
 }
