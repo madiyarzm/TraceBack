@@ -268,6 +268,14 @@ select option {
 }
 .tb-node-arrive { animation: tbArrive 1.4s ease-out 1; border-radius: 8px; }
 
+/* The card whose tool call is running RIGHT NOW: phosphor-green breathing
+   glow. Green is reserved for status semantics — "alive and working" is one. */
+@keyframes tbWorkingGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.0); }
+  50%      { box-shadow: 0 0 14px 1px rgba(63, 185, 80, 0.35); }
+}
+.tb-node-working { animation: tbWorkingGlow 1.6s ease-in-out infinite; border-radius: 8px; }
+
 @keyframes tbSegPulse {
   0%, 100% { opacity: 1; }
   50%      { opacity: 0.35; }

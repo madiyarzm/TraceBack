@@ -310,16 +310,16 @@ class TraceStore {
       }
     }
     if (preIndex === -1) return;
-    // How many tool calls come AFTER this one — its offset from the end of the
-    // transcript, which the tail-reader can locate reliably (see
-    // extractIntentForTool). Counting from the start breaks once the
-    // transcript outgrows the tail window.
+    // How many SAME-TOOL calls come after this one — its offset from the end
+    // of the transcript, which the tail-reader can locate reliably (see
+    // extractIntentForTool). Counting per-tool keeps the two sides aligned
+    // even when the transcript carries calls the hook stream didn't see.
     const fromEnd = session.events
       .slice(preIndex + 1)
-      .filter((e) => e.kind === 'pre_tool_use').length;
+      .filter((e) => e.kind === 'pre_tool_use' && e.toolName === post.toolName).length;
 
     const preEvent = session.events[preIndex];
-    void extractIntentForTool(session.id, fromEnd).then((intent) => {
+    void extractIntentForTool(session.id, fromEnd, post.toolName).then((intent) => {
       if (!intent || preEvent.intent) return;
       preEvent.intent = intent;
       this._rebuildNodes(session);

@@ -330,7 +330,14 @@ function phaseSummary(kind: PhaseKind, nodes: TimelineNode[]): string {
       if (kind === 'running') {
         add(typeof input.command === 'string' ? commandStem(input.command) : null);
       } else if (kind === 'actions') {
-        add(node.toolName);
+        // A bare tool name row reads as filler — name the concrete object
+        // (file, command, query) whenever the input carries one.
+        const file = fileNameOf(item.toolInput);
+        if (file)                                       add(`${node.toolName} ${file}`);
+        else if (typeof input.command === 'string')     add(commandStem(input.command));
+        else if (typeof input.pattern === 'string')     add(`${node.toolName} ${input.pattern}`);
+        else if (typeof input.query === 'string')       add(`${node.toolName} ${String(input.query).slice(0, 40)}`);
+        else                                            add(node.toolName);
       } else {
         add(fileNameOf(item.toolInput));
       }

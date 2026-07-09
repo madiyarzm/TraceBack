@@ -70,12 +70,16 @@ export function noteTranscript(sessionId: string, transcriptPath: string): void 
 }
 
 const INTENT_MAX_CHARS = 120;
-const INTENT_MIN_CHARS = 40;
+const INTENT_MIN_CHARS = 30;
 
-/** Post-action reactions and connective filler — not reasoning. */
-const FILLER_PREFIXES = [
-  'perfect', 'excellent', 'good', 'great', "now i'll", 'now let me', "i'll now",
-];
+/** Reaction interjections: as a punctuated opener ("Perfect! …") they get
+ *  stripped so the substance after them survives; as the first word of the
+ *  sentence proper ("Good progress on…") the sentence is commentary, not
+ *  intent. "Now let me…" / "I'll…" are NOT here — announcing the next action
+ *  is exactly the intent worth showing on the card. */
+const REACTION_WORDS = 'perfect|excellent|good|great|nice|awesome|done|right|okay|ok|yes|hmm|interesting';
+const REACTION_OPENER = new RegExp(`^(?:(?:${REACTION_WORDS})\\s*[!.,:;…—–-]+\\s*)+`, 'i');
+const REACTION_SENTENCE = new RegExp(`^(?:${REACTION_WORDS})\\b`, 'i');
 
 /** First sentence of a text block, trimmed to INTENT_MAX_CHARS. */
 export function firstSentence(text: string): string | null {
@@ -90,15 +94,16 @@ export function firstSentence(text: string): string | null {
 }
 
 /**
- * The first sentence, but only if it reads like actual reasoning: at least
- * INTENT_MIN_CHARS long and not a reaction/filler opener ("Perfect!", "Now
- * let me…"). Null otherwise — no intent beats a meaningless one.
+ * The first substantive sentence of a text block: reaction openers
+ * ("Perfect! …", "Right — …") are stripped rather than nuking the whole
+ * block, pure-commentary sentences and stubs are dropped. Null when nothing
+ * substantive remains — no intent beats a meaningless one.
  */
 export function meaningfulIntent(text: string): string | null {
-  const sentence = firstSentence(text);
+  const stripped = text.replace(/\s+/g, ' ').trim().replace(REACTION_OPENER, '');
+  const sentence = firstSentence(stripped);
   if (!sentence) return null;
-  const lower = sentence.toLowerCase();
-  if (FILLER_PREFIXES.some((p) => lower.startsWith(p))) return null;
+  if (REACTION_SENTENCE.test(sentence)) return null;
   if (sentence.length < INTENT_MIN_CHARS) return null;
   return sentence;
 }
@@ -106,6 +111,8 @@ export function meaningfulIntent(text: string): string | null {
 interface TranscriptItem {
   kind: 'text' | 'tool_use';
   text?: string;
+  /** tool_use only — lets the reader align by tool name, not global position. */
+  name?: string;
 }
 
 // ─── Decision & assumption ledger ────────────────────────────────────────────
@@ -212,20 +219,23 @@ export async function extractDecisions(transcriptPath: string): Promise<LedgerIt
  * block's first sentence, ≤120 chars. Returns null on any miss — the intent
  * field is best-effort everywhere and must never block rendering.
  *
- * `fromEnd` identifies the target tool_use counted BACKWARD from the last one
- * in the transcript (0 = the most recent call). Counting from the end is
- * stable even when only the transcript tail is read: the tail always ends at
- * the live edge of the session, so from-end offsets line up regardless of how
- * much history was truncated. (Counting from the start silently misattributed
- * every call once the transcript outgrew the tail window.)
+ * `fromEnd` identifies the target tool_use counted BACKWARD from the last
+ * matching one in the transcript (0 = the most recent). Counting from the end
+ * is stable even when only the transcript tail is read: the tail always ends
+ * at the live edge of the session, so from-end offsets line up regardless of
+ * how much history was truncated. When `toolName` is given, both sides count
+ * only calls of that tool — a global position drifts whenever the transcript
+ * carries calls the hook stream didn't see (or vice versa).
  *
- * The reasoning sentence is the nearest text block BEFORE the target, skipping
- * over any sibling tool_use calls in between — Claude routinely writes one
- * sentence then fires several tools, and they all share that intent.
+ * The intent is the DIRECTLY preceding text block. If another tool_use sits
+ * between the text and the target, the target is a sibling of a group whose
+ * first call already carries that sentence — it gets null, not a duplicate
+ * subtitle on every card of the burst.
  */
 export async function extractIntentForTool(
   sessionId: string,
   fromEnd: number,
+  toolName?: string,
 ): Promise<string | null> {
   const transcriptPath = _transcriptPaths.get(sessionId);
   if (!isTranscriptPath(transcriptPath)) return null;
@@ -244,13 +254,16 @@ export async function extractIntentForTool(
       try {
         const parsed = JSON.parse(line);
         if (parsed?.type !== 'assistant') continue;
+        // Subagent (sidechain) chatter shares the transcript file but not this
+        // session's hook stream — counting it misattributes everything after.
+        if (parsed?.isSidechain === true) continue;
         const content = parsed?.message?.content;
         if (!Array.isArray(content)) continue;
         for (const block of content) {
           if (block?.type === 'text' && typeof block.text === 'string') {
             items.push({ kind: 'text', text: block.text });
           } else if (block?.type === 'tool_use') {
-            items.push({ kind: 'tool_use' });
+            items.push({ kind: 'tool_use', name: typeof block.name === 'string' ? block.name : undefined });
           }
         }
       } catch {
@@ -258,21 +271,21 @@ export async function extractIntentForTool(
       }
     }
 
-    // Locate the target tool_use, counting backward from the last one.
+    // Locate the target tool_use, counting matching calls backward from the end.
     let target = -1;
     let seen = 0;
     for (let i = items.length - 1; i >= 0; i--) {
       if (items[i].kind !== 'tool_use') continue;
+      if (toolName && items[i].name !== toolName) continue;
       if (seen === fromEnd) { target = i; break; }
       seen++;
     }
     if (target === -1) return null;
 
-    // The nearest preceding text block — sibling tool calls between the text
-    // and this one don't reset it (they share the same stated intent). If that
-    // block is filler ("Perfect!", too short), the intent is null rather than
-    // some older, unrelated sentence.
+    // Intent belongs to the group's FIRST call only: a tool_use between the
+    // text and the target means a sibling already carries this sentence.
     for (let i = target - 1; i >= 0; i--) {
+      if (items[i].kind === 'tool_use') return null;
       if (items[i].kind === 'text') return meaningfulIntent(items[i].text ?? '');
     }
     return null;

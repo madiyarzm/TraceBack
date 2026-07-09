@@ -232,6 +232,15 @@ describe('phase block summaries', () => {
     expect(blocks[0].summary).toBe('codename.ts, PanelApp.tsx +1');
   });
 
+  it('names the concrete objects of an Actions block, not bare tool names', () => {
+    const blocks = computePhaseBlocks([
+      node({ toolName: 'ToolSearch', toolInput: { query: 'select:TaskCreate' } }),
+      node({ toolName: 'Grep', toolInput: { pattern: 'errorCount' } }),
+    ]);
+    expect(blocks[0].label).toBe('Actions');
+    expect(blocks[0].summary).toBe('ToolSearch select:TaskCreate, Grep errorCount');
+  });
+
   it('names the command stems a Running block executed, deduped', () => {
     const blocks = computePhaseBlocks([
       node({ toolName: 'Bash', toolInput: { command: 'npm test' } }),
