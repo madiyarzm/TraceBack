@@ -3,6 +3,7 @@ import DiffViewer from './DiffViewer';
 import { parseToolPayload, formatBytes, summarizeOutput, copyText, isExpectedStumble } from '../payloadParser';
 import { AlertIcon, CheckIcon, ChevronIcon, CopyIcon, FileIcon, ListChecksIcon, PencilIcon } from './Icons';
 import ScrambleText from './ScrambleText';
+import { formatShellCommand } from '../shellFormat';
 
 export type NodeStatus = 'pending' | 'success' | 'error' | 'thinking';
 
@@ -398,24 +399,77 @@ function CuratedBody({ node }: { node: TimelineNode }) {
       {/* ── Bash: command trace + exit pill, logs masked ── */}
       {parsed.kind === 'bash' && parsed.command && (
         <div style={{
-          display: 'flex', alignItems: 'center', gap: 8,
+          display: 'flex', alignItems: 'flex-start', gap: 8,
           background: '#0d1117',
           border: '1px solid var(--tb-border)',
           borderRadius: 4, padding: '6px 10px',
         }}>
-          <span style={{
+          {/* Compound one-liners are split at top-level &&/||/|/; so each stage
+              reads on its own line instead of a break-all wall of characters. */}
+          <code style={{
             fontFamily: 'var(--tb-mono-font, ui-monospace, monospace)',
             fontSize: 11.5, color: '#c9d1d9',
             flex: 1, minWidth: 0,
-            wordBreak: 'break-all',
+            display: 'block',
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
           }}>
-            <span style={{ color: 'var(--tb-text-muted)', userSelect: 'none' }}>$ </span>
-            {parsed.command}
-          </span>
-          <CopyBtn getText={() => parsed.command ?? ''} title="copy command" />
-          <Pill color={isError ? '#f85149' : '#3fb950'}>
-            {isError ? 'failed' : 'exit 0'}
-          </Pill>
+            {formatShellCommand(parsed.command).map((line, i) => (
+              <div key={i} style={{ paddingLeft: i === 0 ? 0 : 14 }}>
+                {i === 0 && <span style={{ color: 'var(--tb-text-muted)', userSelect: 'none' }}>$ </span>}
+                {line}
+              </div>
+            ))}
+          </code>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <CopyBtn getText={() => parsed.command ?? ''} title="copy command" />
+            <Pill color={isError ? '#f85149' : '#3fb950'}>
+              {isError ? 'failed' : 'exit 0'}
+            </Pill>
+          </div>
+        </div>
+      )}
+
+      {/* ── AskUserQuestion: the question(s) asked + the option picked ── */}
+      {parsed.kind === 'askuser' && parsed.questions && parsed.questions.length > 0 && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {parsed.questions.map((q, qi) => (
+            <div key={qi} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                {q.header && (
+                  <span style={{
+                    fontSize: 9.5, fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase',
+                    color: 'var(--tb-text-dim)', background: 'var(--tb-surface-2)',
+                    border: '1px solid var(--tb-border)', borderRadius: 3, padding: '1px 5px',
+                  }}>{q.header}</span>
+                )}
+                <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--tb-text)' }}>{q.question}</span>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                {q.options.map((opt, oi) => {
+                  const picked = q.chosen === opt;
+                  return (
+                    <div key={oi} style={{
+                      display: 'flex', alignItems: 'baseline', gap: 6,
+                      fontSize: 11.5, lineHeight: 1.4,
+                      color: picked ? 'var(--tb-green)' : 'var(--tb-text-muted)',
+                      fontWeight: picked ? 600 : 400,
+                    }}>
+                      <span style={{ flexShrink: 0, userSelect: 'none', width: 10 }}>{picked ? '✓' : '·'}</span>
+                      <span>{opt}</span>
+                    </div>
+                  );
+                })}
+                {/* User typed a custom answer ("Other") that isn't in the option list. */}
+                {q.chosen && !q.options.includes(q.chosen) && (
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontSize: 11.5, lineHeight: 1.4, color: 'var(--tb-green)', fontWeight: 600 }}>
+                    <span style={{ flexShrink: 0, userSelect: 'none', width: 10 }}>✓</span>
+                    <span>{q.chosen}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 

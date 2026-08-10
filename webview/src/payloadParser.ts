@@ -4,7 +4,15 @@
  * UI can mask raw JSON/log dumps behind curated panels.
  */
 
-export type PayloadKind = 'bash' | 'file-read' | 'file-write' | 'web' | 'generic';
+export type PayloadKind = 'bash' | 'file-read' | 'file-write' | 'web' | 'askuser' | 'generic';
+
+export interface AskQuestion {
+  header?:  string;
+  question: string;
+  options:  string[];
+  /** The option the user picked, when the tool result recorded one. */
+  chosen?:  string;
+}
 
 export interface ParsedPayload {
   kind:      PayloadKind;
@@ -18,6 +26,8 @@ export interface ParsedPayload {
   query?:    string;
   domain?:   string;
   url?:      string;
+  /** AskUserQuestion */
+  questions?: AskQuestion[];
 }
 
 const BASH_TOOLS  = new Set(['Bash', 'ExecuteCommand', 'Shell']);
@@ -62,7 +72,48 @@ export function parseToolPayload(
     return { kind: 'web', url, domain: domainOf(url) };
   }
 
+  if (toolName === 'AskUserQuestion') {
+    return { kind: 'askuser', questions: parseAskQuestions(input, output) };
+  }
+
   return { kind: 'generic' };
+}
+
+/**
+ * Turn an AskUserQuestion call into {question, options, chosen} rows. The
+ * questions/options come from the input; the picked option is recovered from
+ * the tool result, which reads `... "<question>"="<chosen>" ...` — so a chapter
+ * can show "we asked X, you picked Y" instead of an opaque tool card.
+ */
+export function parseAskQuestions(
+  input?: Record<string, unknown>,
+  output?: string,
+): AskQuestion[] {
+  const raw = Array.isArray(input?.questions) ? input!.questions : [];
+  const chosenByQuestion = new Map<string, string>();
+  if (output) {
+    // Pairs like "Which default surface?"="Lean sidebar + auto-open panel".
+    const re = /"([^"]+)"\s*=\s*"([^"]+)"/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(output)) !== null) chosenByQuestion.set(m[1], m[2]);
+  }
+  const out: AskQuestion[] = [];
+  for (const q of raw) {
+    if (!q || typeof q !== 'object') continue;
+    const question = str((q as Record<string, unknown>).question);
+    if (!question) continue;
+    const optsRaw = (q as Record<string, unknown>).options;
+    const options = Array.isArray(optsRaw)
+      ? optsRaw.map((o) => str((o as Record<string, unknown>)?.label)).filter((s): s is string => !!s)
+      : [];
+    out.push({
+      header:   str((q as Record<string, unknown>).header),
+      question,
+      options,
+      chosen:   chosenByQuestion.get(question),
+    });
+  }
+  return out;
 }
 
 function str(v: unknown): string | undefined {
