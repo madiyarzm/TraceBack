@@ -10,7 +10,7 @@ webview/tsconfig.json
 webview/vite.config.ts
 **/*.map
 **/*.ts
-!out/**
+!out/**/*.js
 !webview/dist/**
 .claude/**
 docs/**
