@@ -30,6 +30,13 @@ It also lets you **step in**: pause a running agent at its next action, redirect
   <img src="assets/traceback_demo.gif" alt="TraceBack — live agent timeline with anomaly detection, pause and redirect" width="720" />
 </div>
 
+<!-- The video plays inline on GitHub; the Marketplace shows the GIF above plus the link below. -->
+<div align="center">
+  <video src="https://github.com/madiyarzm/TraceBack/raw/main/assets/traceback_demo.mp4" controls width="720"></video>
+
+  **▶ [Watch the full walkthrough](https://github.com/madiyarzm/TraceBack/raw/main/assets/traceback_demo.mp4)**
+</div>
+
 ---
 
 ## Why not just use a dashboard?
