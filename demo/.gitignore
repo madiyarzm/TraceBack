@@ -1,0 +1,4 @@
+# Transient artifacts the feeder produces at runtime
+.transcripts/
+sample-app/test/uniqueness.test.js
+sample-app/node_modules/

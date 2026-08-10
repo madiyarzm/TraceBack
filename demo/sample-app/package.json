@@ -1,0 +1,9 @@
+{
+  "name": "linkstash",
+  "version": "0.1.0",
+  "description": "A tiny in-memory URL shortener — the demo codebase TraceBack agents work on.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
