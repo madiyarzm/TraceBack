@@ -23,6 +23,7 @@ assets/demo.gif
 .env.example
 .gitignore
 .github/**
+demo/**
 vitest.config.mts
 out/**/*.map
 webview/package-lock.json

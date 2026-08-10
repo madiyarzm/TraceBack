@@ -2,7 +2,9 @@
 
 # TraceBack
 
-**See what your AI coding agent actually did — and steer it — from inside VS Code.**
+**The control plane for AI coding agents.**
+
+See what your agent changed, why, and whether you can trust it — then steer it, without leaving VS Code.
 
 [![CI](https://github.com/madiyarzm/TraceBack/actions/workflows/ci.yml/badge.svg)](https://github.com/madiyarzm/TraceBack/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
