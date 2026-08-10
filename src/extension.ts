@@ -223,4 +223,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 export async function deactivate(): Promise<void> {
   stopServer();
   traceStore.dispose();
+  // Strip our curl hooks on the way out so a disabled or uninstalled extension
+  // doesn't leave Claude Code POSTing to a dead port on every tool call.
+  // removeHooks only touches traceback-tagged entries, so it's safe here.
+  try {
+    if (outputChannel) await removeHooks(outputChannel);
+  } catch {
+    /* best-effort during shutdown */
+  }
 }
