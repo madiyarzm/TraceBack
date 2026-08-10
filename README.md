@@ -93,46 +93,55 @@ The server binds `127.0.0.1` only and refuses any request carrying an `Origin` h
 
 ## What you get
 
-**Review, not replay**
+#### Review, not replay
 
-- **Prompt chapters** — each prompt opens a chapter; the agent's work groups under the tasks it declared. No plan? Actions still fall into tidy Reading / Editing / Running blocks.
-- **Net-change review** — one net diff per file (baseline → now), each carrying the agent's reasoning, the failing command that triggered it, and a verification badge.
-- **Verification badges** — per file: **verified** (a test/build ran after the last edit and passed), **failing**, or **unverified**. *"2 of 5 changed files never checked"* is the sentence that decides whether you commit.
-- **Decision & assumption ledger** — the judgment calls the agent makes in prose (*"I'll assume the config stays JSON"*) mined from the transcript, so you catch a wrong assumption before three files calcify around it.
-- **Replay** — step through a finished session like a debugger; every view recomputes from the slice, so the whole session time-travels together.
+| | |
+|---|---|
+| **Prompt chapters** | Each prompt opens a chapter, and the agent's work groups under the tasks it declared. No plan? Actions still fall into tidy Reading / Editing / Running blocks — never a raw scroll. |
+| **Net-change review** | One diff per file, baseline → now — carrying the agent's own reasoning, the failing command that triggered the change, and a verification badge. |
+| **Verification badges** | Per changed file: **verified**, **failing**, or **unverified**. *"2 of 5 changed files never checked"* is the line that decides whether you commit. |
+| **Decision ledger** | The judgment calls the agent buries in prose — *"I'll assume the config stays JSON"* — pulled out as a list, so a wrong assumption gets caught before three files calcify around it. |
+| **Replay** | Step through a finished session like a debugger; every view recomputes from the slice, so the whole run time-travels together. |
 
-**Catch trouble**
+#### Catch trouble
 
-- **Anomaly engine** — deliberately quiet. Flags near-duplicate loops, error thrash, context spirals, and scope creep — but treats a stall as *"waiting on you"*, not a red alarm, since it usually means a permission prompt.
-- **Files touched, not just changed** — a tree of everything the agent *read*, too. *"It read fourteen files for a two-line change"* is a coupling insight no chronological view surfaces.
+| | |
+|---|---|
+| **Anomaly engine** | Flags near-duplicate loops, error thrash, context spirals, and scope creep — and stays quiet otherwise. A stall reads as *"waiting on you,"* not a red alarm. |
+| **Files touched** | A tree of everything the agent *read*, not just what it changed. *"Fourteen files read for a two-line change"* is a coupling insight no timeline surfaces. |
 
-**Step in**
+#### Step in
 
-- **Breakpoints** — hit **⏸ pause** and the agent freezes at its next tool call (TraceBack holds the hook's HTTP response open, exactly like a debugger). **▶ resume**, or type into the redirect box — your message reaches the agent as the reason its call was denied, and it changes course mid-run.
-- **Guards** — policy rules that protect *every* session with no human watching: never delete files, stay in the project folder, protect `.env`, no push to `main`. Add your own as regexes. A matching call is denied before it runs, with the reason fed back to the agent.
+| | |
+|---|---|
+| **Breakpoints** | Hit **⏸ pause** and the agent freezes at its next tool call — TraceBack holds the hook's HTTP response open, exactly like a debugger. |
+| **Redirect** | Type into the redirect box on a paused agent; your message reaches it as the reason its call was denied, and it changes course mid-run. |
+| **Guards** | Policy that protects *every* session with no human watching — never delete, stay in project, protect `.env`, no push to `main`, plus your own regexes. Denied before the call runs, reason fed back to the agent. |
 
-**Understand & share**
+#### Understand & share
 
-- **Multi-agent fleet view** — run several sessions in parallel; each gets a distinct color + tag and a live status.
-- **Real token & cost metrics** — pulled from the Claude Code transcript, not estimated.
-- **Export** — one menu, four formats: JSON, Markdown (a post-mortem for a GitHub issue or handoff), a self-contained HTML page, or a PNG.
-- **Narrative Engine & chat** *(optional)* — connect Groq or a local Ollama for plain-English summaries and a session Q&A helper.
+| | |
+|---|---|
+| **Fleet view** | Run several agents at once; each gets a distinct color, tag, and live status. |
+| **Real token metrics** | Pulled from the Claude Code transcript, not estimated. |
+| **Export** | One menu, four formats — JSON, a Markdown post-mortem, self-contained HTML, or a PNG. |
+| **Narrative & chat** *(optional)* | Groq or a local Ollama for plain-English summaries and a session Q&A helper. |
 
 ---
 
-## Pro tip — richer traces with one CLAUDE.md line
+## Pro tip — teach your agent to narrate
 
-TraceBack shows the sentence the agent writes right before each tool call as that step's *intent*. Make it a habit by adding this to your `~/.claude/CLAUDE.md` or a project `CLAUDE.md`:
+A trace is only as rich as what the agent says out loud. TraceBack reads the sentence written just before each tool call and shows it as that step's *intent* — so the more your agent narrates its thinking, the more the trace reads like a decision log than a list of tool names. Make it a standing habit with a few lines in your `~/.claude/CLAUDE.md` (global) or a project `CLAUDE.md`:
 
 ```markdown
 ## Working style
-- Before each tool call, state in one concise sentence what you are about to
-  do and why. No filler like "Perfect!" or a bare "Now let me...".
-- When you make a judgment call (an assumption, a trade-off, choosing one
-  approach over another), say so explicitly in prose.
+- Before each tool call, say in one sentence what you're about to do and why.
+  No filler — skip "Perfect!" and a bare "Now let me…".
+- When you make a judgment call — an assumption, a trade-off, picking one
+  approach over another — state it plainly in prose.
 ```
 
-The first line feeds the intent subtitle on every card; the second feeds the decision & assumption ledger.
+The first rule feeds the *intent* on every card; the second feeds the decision ledger. A handful of tokens per step turns the trace from *what* the agent did into *why*.
 
 ---
 
@@ -185,7 +194,8 @@ The derivation modules — `chapters.ts`, `review.ts`, `fileChanges.ts`, `anomal
 
 ## Roadmap
 
-- **Beyond Claude Code** — a generic OTLP-shaped adapter so any agent (LangGraph, OpenAI Agents SDK, MCP servers) can stream into the same chapter/review views.
+- **Codex CLI support** — bring the same chapters, review, and guards to OpenAI's Codex CLI, not just Claude Code.
+- **Any agent, one view** — a generic OTLP-shaped adapter so LangGraph, the OpenAI Agents SDK, or MCP servers can stream into the same chapter/review views.
 - **Review for archived sessions** — persist baseline snapshots so net-change review works on history, not just live runs.
 - **LLM-assisted ledger** — an optional offline pass to catch judgment calls the regex miner misses.
 
