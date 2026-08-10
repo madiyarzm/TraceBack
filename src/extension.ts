@@ -118,6 +118,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     traceStore.onDidUpdate((session) => {
       provider.postSessionUpdate(session);
+      provider.maybeAutoOpenPanel(session);
 
       const pendingSave = archiveTimers.get(session.id);
       if (pendingSave) clearTimeout(pendingSave);

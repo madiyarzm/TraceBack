@@ -100,6 +100,11 @@
           "default": true,
           "description": "Automatically install Claude Code hooks into ~/.claude/settings.json on activation."
         },
+        "traceback.autoOpenMap": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the full Action Map panel automatically the first time a session shows activity. The sidebar stays a lightweight status view. If you close the panel, it won't reopen for that session."
+        },
         "traceback.llmProvider": {
           "type": "string",
           "enum": [

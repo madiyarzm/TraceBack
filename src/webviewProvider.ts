@@ -16,6 +16,12 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
   private _view?:  vscode.WebviewView;
   private _panel?: vscode.WebviewPanel;
 
+  // Sessions we've already handled for auto-open. Once a session is in here we
+  // never auto-reveal for it again — so if the user closes the panel, more
+  // events from the same session won't re-pop it. A brand-new session isn't in
+  // the set, so it gets a fresh auto-open.
+  private _autoOpenedSessions = new Set<string>();
+
   private _onLlmQuery = new vscode.EventEmitter<LLMQueryEvent>();
   readonly onLlmQuery = this._onLlmQuery.event;
 
@@ -88,6 +94,24 @@ export class TracebackWebviewProvider implements vscode.WebviewViewProvider {
     const msg = { type: 'llm_response', answer };
     this._view?.webview.postMessage(msg);
     this._panel?.webview.postMessage(msg);
+  }
+
+  /**
+   * Reveal the Action Map the first time a session shows real activity, unless
+   * the user opted out (traceback.autoOpenMap = false). Fired on every session
+   * update; the _autoOpenedSessions guard makes it a once-per-session no-op so
+   * it never fights the user who closes the panel. The sidebar stays the
+   * lightweight always-there home; this brings up the roomy surface exactly
+   * when an agent starts working.
+   */
+  maybeAutoOpenPanel(session: TraceSession): void {
+    if (this._autoOpenedSessions.has(session.id)) return;
+    if (vscode.workspace.getConfiguration('traceback').get<boolean>('autoOpenMap') === false) return;
+    // Only once the session has done something visible — ignore the empty
+    // shell created by Clear or a prompt-only warm-up (__-prefixed nodes).
+    if (!session.nodes.some((n) => !n.toolName.startsWith('__'))) return;
+    this._autoOpenedSessions.add(session.id);
+    this.openFullPanel(this._extensionUri);
   }
 
   openFullPanel(extensionUri: vscode.Uri): void {
