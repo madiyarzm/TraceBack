@@ -2,7 +2,7 @@
   "name": "traceback-ai",
   "displayName": "TraceBack — AI Agent Control Plane",
   "description": "The control plane for AI coding agents. Review what Claude Code changed, why, and whether it was verified — plus anomaly detection, breakpoints, and guards to catch and steer runs. Local-first, in your editor.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "madiyarzhunussov",
   "license": "MIT",
   "icon": "assets/icon_v3.png",
