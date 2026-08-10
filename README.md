@@ -93,7 +93,7 @@ The server binds `127.0.0.1` only and refuses any request carrying an `Origin` h
 
 ## What you get
 
-#### Review, not replay
+#### Review and replay
 
 | | |
 |---|---|
@@ -103,14 +103,14 @@ The server binds `127.0.0.1` only and refuses any request carrying an `Origin` h
 | **Decision ledger** | The judgment calls the agent buries in prose — *"I'll assume the config stays JSON"* — pulled out as a list, so a wrong assumption gets caught before three files calcify around it. |
 | **Replay** | Step through a finished session like a debugger; every view recomputes from the slice, so the whole run time-travels together. |
 
-#### Catch trouble
+#### Catch anomalies
 
 | | |
 |---|---|
 | **Anomaly engine** | Flags near-duplicate loops, error thrash, context spirals, and scope creep — and stays quiet otherwise. A stall reads as *"waiting on you,"* not a red alarm. |
 | **Files touched** | A tree of everything the agent *read*, not just what it changed. *"Fourteen files read for a two-line change"* is a coupling insight no timeline surfaces. |
 
-#### Step in
+#### Step in & Redirect
 
 | | |
 |---|---|
@@ -129,7 +129,7 @@ The server binds `127.0.0.1` only and refuses any request carrying an `Origin` h
 
 ---
 
-## Pro tip — teach your agent to narrate
+## Tip — teach your agent to narrate
 
 A trace is only as rich as what the agent says out loud. TraceBack reads the sentence written just before each tool call and shows it as that step's *intent* — so the more your agent narrates its thinking, the more the trace reads like a decision log than a list of tool names. Make it a standing habit with a few lines in your `~/.claude/CLAUDE.md` (global) or a project `CLAUDE.md`:
 
